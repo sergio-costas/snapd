@@ -40,7 +40,7 @@ const desktopLaunchConnectedPlugAppArmor = `
 
 # Access to the desktop and icon files installed by snaps
 /var/lib/snapd/desktop/applications/{,*} r,
-/var/lib/snapd/desktop/icons/{,*} r,
+/var/lib/snapd/desktop/icons/{,**} r,
 
 # Allow to execute snap commands.
 /snap/bin/* ixr,
