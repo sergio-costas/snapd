@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2014-2021 Canonical Ltd
+ * Copyright (C) 2014-2022 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -75,6 +75,10 @@ type PlaceInfo interface {
 	// CommonDataDir returns the data directory common across revisions of the
 	// snap.
 	CommonDataDir() string
+
+	// CommonDataSaveDir returns the save data directory common across revisions
+	// of the snap.
+	CommonDataSaveDir() string
 
 	// UserCommonDataDir returns the per user data directory common across
 	// revisions of the snap.
@@ -189,6 +193,12 @@ func DataDir(name string, revision Revision) string {
 	return filepath.Join(BaseDataDir(name), revision.String())
 }
 
+// CommonDataSaveDir returns a core-specific save directory meant to provide access
+// to a per-snap storage that is preserved across factory reset.
+func CommonDataSaveDir(name string) string {
+	return filepath.Join(dirs.SnapDataSaveDir, name)
+}
+
 // CommonDataDir returns the common data directory for given snap name. The name
 // can be either a snap name or snap instance name.
 func CommonDataDir(name string) string {
@@ -260,17 +270,19 @@ func SnapDir(home string, opts *dirs.SnapDirOptions) string {
 // from the store but is not required for working offline should not
 // end up in SideInfo.
 type SideInfo struct {
-	RealName          string              `yaml:"name,omitempty" json:"name,omitempty"`
-	SnapID            string              `yaml:"snap-id" json:"snap-id"`
-	Revision          Revision            `yaml:"revision" json:"revision"`
-	Channel           string              `yaml:"channel,omitempty" json:"channel,omitempty"`
-	EditedLinks       map[string][]string `yaml:"links,omitempty" json:"links,omitempty"`
-	EditedContact     string              `yaml:"contact,omitempty" json:"contact,omitempty"`
-	EditedTitle       string              `yaml:"title,omitempty" json:"title,omitempty"`
-	EditedSummary     string              `yaml:"summary,omitempty" json:"summary,omitempty"`
-	EditedDescription string              `yaml:"description,omitempty" json:"description,omitempty"`
-	Private           bool                `yaml:"private,omitempty" json:"private,omitempty"`
-	Paid              bool                `yaml:"paid,omitempty" json:"paid,omitempty"`
+	RealName    string              `yaml:"name,omitempty" json:"name,omitempty"`
+	SnapID      string              `yaml:"snap-id" json:"snap-id"`
+	Revision    Revision            `yaml:"revision" json:"revision"`
+	Channel     string              `yaml:"channel,omitempty" json:"channel,omitempty"`
+	EditedLinks map[string][]string `yaml:"links,omitempty" json:"links,omitempty"`
+	// subsumed by EditedLinks, by need to set for if we revert
+	// to old snapd
+	LegacyEditedContact string `yaml:"contact,omitempty" json:"contact,omitempty"`
+	EditedTitle         string `yaml:"title,omitempty" json:"title,omitempty"`
+	EditedSummary       string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	EditedDescription   string `yaml:"description,omitempty" json:"description,omitempty"`
+	Private             bool   `yaml:"private,omitempty" json:"private,omitempty"`
+	Paid                bool   `yaml:"paid,omitempty" json:"paid,omitempty"`
 }
 
 // Info provides information about snaps.
@@ -285,6 +297,8 @@ type Info struct {
 	OriginalTitle       string
 	OriginalSummary     string
 	OriginalDescription string
+
+	SnapProvenance string
 
 	Environment strutil.OrderedMap
 
@@ -319,8 +333,11 @@ type Info struct {
 
 	Publisher StoreAccount
 
-	Media   MediaInfos
-	Website string
+	Media MediaInfos
+
+	// subsumed by EditedLinks but needed to handle information
+	// stored by old snapd
+	LegacyWebsite string
 
 	StoreURL string
 
@@ -406,6 +423,19 @@ type ChannelSnapInfo struct {
 	ReleasedAt  time.Time       `json:"released-at"`
 }
 
+// Provenance returns the provenance of the snap, this is a label set
+// e.g to distinguish snaps that are not expected to be processed by the global
+// store. Constraints on this value are used to allow for delegated
+// snap-revision signing.
+// This returns naming.DefaultProvenance if no value is set explicitly
+// in the snap metadata.
+func (s *Info) Provenance() string {
+	if s.SnapProvenance == "" {
+		return naming.DefaultProvenance
+	}
+	return s.SnapProvenance
+}
+
 // InstanceName returns the blessed name of the snap decorated with instance
 // key, if any.
 func (s *Info) InstanceName() string {
@@ -466,32 +496,62 @@ func (s *Info) Description() string {
 // Links returns the blessed set of snap-related links.
 func (s *Info) Links() map[string][]string {
 	if s.EditedLinks != nil {
+		// coming from thes store, assumed normalized
 		return s.EditedLinks
 	}
-	return s.OriginalLinks
+	return s.normalizedOriginalLinks()
+}
+
+func (s *Info) normalizedOriginalLinks() map[string][]string {
+	res := make(map[string][]string, len(s.OriginalLinks))
+	addLink := func(k, v string) {
+		if v == "" {
+			return
+		}
+		u, err := url.Parse(v)
+		if err != nil {
+			// shouldn't happen if Validate succeeded but be robust
+			return
+		}
+		// assume email if no scheme
+		// Validate enforces the presence of @
+		if u.Scheme == "" {
+			v = "mailto:" + v
+		}
+		if strutil.ListContains(res[k], v) {
+			return
+		}
+		res[k] = append(res[k], v)
+	}
+	addLink("contact", s.LegacyEditedContact)
+	addLink("website", s.LegacyWebsite)
+	for k, links := range s.OriginalLinks {
+		for _, v := range links {
+			addLink(k, v)
+		}
+	}
+	if len(res) == 0 {
+		return nil
+	}
+	return res
 }
 
 // Contact returns the blessed contact information for the snap.
 func (s *Info) Contact() string {
-	var contact string
-	if s.EditedContact != "" {
-		contact = s.EditedContact
-	} else {
-		contacts := s.Links()["contact"]
-		if len(contacts) > 0 {
-			contact = contacts[0]
-		}
+	contacts := s.Links()["contact"]
+	if len(contacts) > 0 {
+		return contacts[0]
 	}
-	if contact != "" {
-		u, err := url.Parse(contact)
-		if err != nil {
-			return ""
-		}
-		if u.Scheme == "" {
-			contact = "mailto:" + contact
-		}
+	return ""
+}
+
+// Website returns the blessed website information for the snap.
+func (s *Info) Website() string {
+	websites := s.Links()["website"]
+	if len(websites) > 0 {
+		return websites[0]
 	}
-	return contact
+	return ""
 }
 
 // Type returns the type of the snap, including additional snap ID check
@@ -542,6 +602,11 @@ func (s *Info) UserExposedHomeDir(home string) string {
 // CommonDataDir returns the data directory common across revisions of the snap.
 func (s *Info) CommonDataDir() string {
 	return CommonDataDir(s.InstanceName())
+}
+
+// CommonDataSaveDir returns the save data directory common across revisions of the snap.
+func (s *Info) CommonDataSaveDir() string {
+	return CommonDataSaveDir(s.InstanceName())
 }
 
 // DataHomeGlob returns the globbing expression for the snap directories in use
@@ -693,8 +758,7 @@ func (s *Info) DesktopPrefix() string {
 // DownloadInfo contains the information to download a snap.
 // It can be marshalled.
 type DownloadInfo struct {
-	AnonDownloadURL string `json:"anon-download-url,omitempty"`
-	DownloadURL     string `json:"download-url,omitempty"`
+	DownloadURL string `json:"download-url,omitempty"`
 
 	Size     int64  `json:"size,omitempty"`
 	Sha3_384 string `json:"sha3-384,omitempty"`
@@ -709,13 +773,12 @@ type DownloadInfo struct {
 // DeltaInfo contains the information to download a delta
 // from one revision to another.
 type DeltaInfo struct {
-	FromRevision    int    `json:"from-revision,omitempty"`
-	ToRevision      int    `json:"to-revision,omitempty"`
-	Format          string `json:"format,omitempty"`
-	AnonDownloadURL string `json:"anon-download-url,omitempty"`
-	DownloadURL     string `json:"download-url,omitempty"`
-	Size            int64  `json:"size,omitempty"`
-	Sha3_384        string `json:"sha3-384,omitempty"`
+	FromRevision int    `json:"from-revision,omitempty"`
+	ToRevision   int    `json:"to-revision,omitempty"`
+	Format       string `json:"format,omitempty"`
+	DownloadURL  string `json:"download-url,omitempty"`
+	Size         int64  `json:"size,omitempty"`
+	Sha3_384     string `json:"sha3-384,omitempty"`
 }
 
 // check that Info is a PlaceInfo
@@ -1059,6 +1122,11 @@ func (app *AppInfo) WrapperPath() string {
 // CompleterPath returns the path to the completer snippet for the app binary.
 func (app *AppInfo) CompleterPath() string {
 	return filepath.Join(dirs.CompletersDir, JoinSnapApp(app.Snap.InstanceName(), app.Name))
+}
+
+// CompleterPath returns the legacy path to the completer snippet for the app binary.
+func (app *AppInfo) LegacyCompleterPath() string {
+	return filepath.Join(dirs.LegacyCompletersDir, JoinSnapApp(app.Snap.InstanceName(), app.Name))
 }
 
 func (app *AppInfo) launcherCommand(command string) string {

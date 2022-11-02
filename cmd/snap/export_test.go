@@ -132,7 +132,7 @@ var (
 	MaybePrintNotes             = (*infoWriter).maybePrintNotes
 	MaybePrintStandaloneVersion = (*infoWriter).maybePrintStandaloneVersion
 	MaybePrintBuildDate         = (*infoWriter).maybePrintBuildDate
-	MaybePrintContact           = (*infoWriter).maybePrintContact
+	MaybePrintLinks             = (*infoWriter).maybePrintLinks
 	MaybePrintBase              = (*infoWriter).maybePrintBase
 	MaybePrintPath              = (*infoWriter).maybePrintPath
 	MaybePrintSum               = (*infoWriter).maybePrintSum
@@ -458,13 +458,15 @@ func MockAutostartSessionApps(f func(string) error) func() {
 	}
 }
 
-func ParseQuotaValues(maxMemory, cpuMax, cpuSet, threadsMax string) (*client.QuotaValues, error) {
+func ParseQuotaValues(maxMemory, cpuMax, cpuSet, threadsMax, journalSizeMax, journalRateLimit string) (*client.QuotaValues, error) {
 	var quotas cmdSetQuota
 
 	quotas.MemoryMax = maxMemory
 	quotas.CPUMax = cpuMax
 	quotas.CPUSet = cpuSet
 	quotas.ThreadsMax = threadsMax
+	quotas.JournalSizeMax = journalSizeMax
+	quotas.JournalRateLimit = journalRateLimit
 
 	return quotas.parseQuotas()
 }

@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2016 Canonical Ltd
+ * Copyright (C) 2016-2022 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -402,7 +402,7 @@ func (ts *taskRunnerSuite) TestAbortAcrossLanesDescendantTask(c *C) {
 		c.Logf("do %q", task.Summary())
 		label := task.Summary()
 		if label == "t15" {
-			ch <- fmt.Sprintf("t15:error")
+			ch <- "t15:error"
 			return fmt.Errorf("mock error")
 		}
 		ch <- fmt.Sprintf("%s:do", label)
@@ -504,7 +504,7 @@ func (ts *taskRunnerSuite) TestAbortAcrossLanesStriclyOrderedTasks(c *C) {
 		c.Logf("do %q", task.Summary())
 		label := task.Summary()
 		if label == "t24" {
-			ch <- fmt.Sprintf("t24:error")
+			ch <- "t24:error"
 			return fmt.Errorf("mock error")
 		}
 		ch <- fmt.Sprintf("%s:do", label)
@@ -807,6 +807,37 @@ func (ts *taskRunnerSuite) TestStopAskForRetry(c *C) {
 	defer st.Unlock()
 	c.Check(t.Status(), Equals, state.DoingStatus)
 	c.Check(t.AtTime().IsZero(), Equals, false)
+}
+
+func (ts *taskRunnerSuite) TestTaskReturningHold(c *C) {
+	sb := &stateBackend{}
+	st := state.New(sb)
+	r := state.NewTaskRunner(st)
+	defer r.Stop()
+
+	r.AddHandler("ask-for-hold", func(t *state.Task, tb *tomb.Tomb) error {
+		// ask for hold
+		return &state.Hold{}
+	}, nil)
+
+	st.Lock()
+	chg := st.NewChange("install", "...")
+	t := st.NewTask("ask-for-hold", "...")
+	chg.AddTask(t)
+	st.Unlock()
+
+	r.Ensure()
+	// wait for handler to finish
+	r.Wait()
+
+	st.Lock()
+	defer st.Unlock()
+	c.Check(t.Status(), Equals, state.HoldStatus)
+
+	// NB: such a change, finishing in a held task is ready; this is a bit
+	// odd, but usually this would be done for tasks that expect more tasks
+	// to follow them
+	c.Check(chg.Status().Ready(), Equals, true)
 }
 
 func (ts *taskRunnerSuite) TestRetryAfterDuration(c *C) {

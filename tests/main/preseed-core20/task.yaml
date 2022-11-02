@@ -6,7 +6,9 @@ details: |
 
 # TODO: test on 21.10 / 22.04; they fail because new build of snapd cannot
 # be run in core20-based chroot due to old libc.
-systems: [ubuntu-20.04*]
+# This test cannot be executed in arm architecture because the model
+# assertion is made for amd64
+systems: [ubuntu-20.04-64]
 
 environment:
   PREPARE_IMAGE_DIR: uc20image
@@ -18,6 +20,8 @@ prepare: |
   . "$TESTSLIB"/prepare.sh
   snap download "--channel=${SNAPD_CHANNEL}" snapd
   repack_snapd_snap_with_deb_content_and_run_mode_firstboot_tweaks /tmp
+
+  snap pack systemusers-snap
 
   mkdir -p "$STORE_DIR/asserts"
   echo Expose the needed assertions through the fakestore
@@ -51,7 +55,7 @@ execute: |
   SNAPD_SNAP=$(ls /tmp/snapd*.snap)
 
   # XXX: confusingly, the name of our test key is actually " (test)".
-  snap prepare-image --preseed --preseed-sign-key=" (test)" --channel=stable --snap="$SNAPD_SNAP" "$TESTSLIB"/assertions/developer1-20-dangerous.model "$PREPARE_IMAGE_DIR" > preseed.log 2>&1
+  snap prepare-image --preseed --preseed-sign-key=" (test)" --channel=stable --snap="$SNAPD_SNAP" --snap systemusers-snap_1.0_all.snap "$TESTSLIB"/assertions/developer1-20-dangerous.model "$PREPARE_IMAGE_DIR" > preseed.log 2>&1
 
   echo "Make sure no umount errors were reported during preseeding cleanup"
   NOMATCH "umount.*failed" < preseed.log
@@ -142,9 +146,9 @@ execute: |
   MATCH "^snap/core20/current" < files.log
   MATCH "^snap/snapd/current" < files.log
 
-  MATCH "^var/cache/apparmor/11143a61.0/snap.pc.hook.configure" < files.log
-  MATCH "^var/cache/apparmor/11143a61.0/snap-update-ns.pc" < files.log
-  MATCH "^var/cache/apparmor/11143a61.0/snap-confine.snapd.x1" < files.log
+  MATCH "^var/cache/apparmor/.*.0/snap.pc.hook.configure" < files.log
+  MATCH "^var/cache/apparmor/.*.0/snap-update-ns.pc" < files.log
+  MATCH "^var/cache/apparmor/.*.0/snap-confine.snapd.x1" < files.log
 
   MATCH "^var/lib/snapd/apparmor/profiles/snap.pc.hook.configure" < files.log
   MATCH "^var/lib/snapd/apparmor/profiles/snap-update-ns.pc" < files.log
@@ -163,3 +167,6 @@ execute: |
   MATCH "^var/lib/snapd/assertions/asserts-v0/model/16/developer1/testkeys-snapd-dangerous-core-20-amd64/" < files.log
   MATCH "^var/lib/snapd/assertions/asserts-v0/snap-revision/.*" < files.log
   MATCH "^var/lib/snapd/assertions/asserts-v0/account-key/.*" < files.log
+
+  MATCH "^var/lib/extrausers/group" < files.log
+  MATCH "^var/lib/extrausers/passwd" < files.log

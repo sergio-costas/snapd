@@ -8,8 +8,6 @@ show_help() {
     echo "       is-nested [core|classic|uc16|uc18|uc20|uc22]"
     echo "       show [ATTRIBUTE]"
     echo "       vm <ACTION>"
-    echo "       exec [--user <USER>] [--pwd <PWD>] <CMD>"
-    echo "       copy <FILEPATH>"
     echo "       get <ARTIFACT>"
     echo "       download <REMOTE_FILE>"
     echo "       wait-for <EVENT>"
@@ -66,7 +64,6 @@ show_help() {
     echo ""
     echo "REMOTE_FILE:"
     echo "  snakeoil-key: snakeoil key"
-    echo "  image-url: url used to build a classic vm"
     echo "  spread: the spread binary"
     echo ""
     echo "EVENT:"
@@ -212,43 +209,14 @@ vm() {
         status)
             nested_status_vm
             ;;
+        unclean-reboot)
+            nested_force_restart_vm
+            ;;
         *)
             echo "tests.nested: action not supported: $1" >&2
             exit 1
             ;;
     esac
-}
-
-exec() {
-    local user pwd
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --user)
-                user="$2"
-                shift 2
-                ;;
-            --pwd)
-                pwd="$2"
-                shift 2
-                ;;
-            *)
-                break
-                ;;
-        esac
-    done
-    if [ -n "$user" ]; then
-        if [ -z "$pwd" ]; then
-                echo "tests.nested: password needed to execute command" >&2
-                exit 1
-        fi
-        nested_exec_as "$user" "$pwd" "$@"
-    else
-        nested_exec "$@"
-    fi    
-}
-
-copy() {
-    nested_copy "$@"
 }
 
 get() {
@@ -304,10 +272,6 @@ download() {
     case "$1" in
         snakeoil-key)
             action=nested_get_snakeoil_key
-            shift
-            ;;
-        image-url)
-            action=nested_get_image_url_for_vm
             shift
             ;;
         spread)

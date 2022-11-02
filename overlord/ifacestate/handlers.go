@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2016 Canonical Ltd
+ * Copyright (C) 2016-2022 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -36,6 +36,7 @@ import (
 	"github.com/snapcore/snapd/interfaces/hotplug"
 	"github.com/snapcore/snapd/logger"
 	"github.com/snapcore/snapd/overlord/hookstate"
+	"github.com/snapcore/snapd/overlord/ifacestate/schema"
 	"github.com/snapcore/snapd/overlord/servicestate"
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
@@ -56,7 +57,7 @@ func journalQuotaLayout(quotaGroup *quota.Group) []snap.Layout {
 	// bind mount the journal namespace folder on top of the journal folder
 	// /run/systemd/journal.<ns> -> /run/systemd/journal
 	layouts := []snap.Layout{{
-		Bind: path.Join(dirs.SnapSystemdRunDir, fmt.Sprintf("journal.snap-%s", quotaGroup.Name)),
+		Bind: path.Join(dirs.SnapSystemdRunDir, fmt.Sprintf("journal.%s", quotaGroup.JournalNamespaceName())),
 		Path: path.Join(dirs.SnapSystemdRunDir, "journal"),
 		Mode: 0755,
 	}}
@@ -165,7 +166,33 @@ func (m *InterfaceManager) doSetupProfiles(task *state.Task, tomb *tomb.Tomb) er
 	if err != nil {
 		return err
 	}
-	return m.setupProfilesForSnap(task, tomb, snapInfo, opts, perfTimings)
+	if err := m.setupProfilesForSnap(task, tomb, snapInfo, opts, perfTimings); err != nil {
+		return err
+	}
+	return setPendingProfilesSideInfo(task.State(), snapsup.InstanceName(), snapsup.SideInfo)
+}
+
+// setupPendingProfilesSideInfo helps updating information about any
+// revision for which security profiles are set up while the snap is
+// not yet active.
+func setPendingProfilesSideInfo(st *state.State, instanceName string, si *snap.SideInfo) error {
+	var snapst snapstate.SnapState
+	if err := snapstate.Get(st, instanceName, &snapst); err != nil && !errors.Is(err, state.ErrNoState) {
+		return err
+	}
+	if !snapst.IsInstalled() {
+		// not yet visible to the rest of the system, nothing to do here
+		return nil
+	}
+	if snapst.Active {
+		// nothing is pending
+		return nil
+	}
+	snapst.PendingSecurity = &snapstate.PendingSecurityState{
+		SideInfo: si,
+	}
+	snapstate.Set(st, instanceName, &snapst)
+	return nil
 }
 
 func (m *InterfaceManager) setupProfilesForSnap(task *state.Task, _ *tomb.Tomb, snapInfo *snap.Info, opts interfaces.ConfinementOptions, tm timings.Measurer) error {
@@ -281,7 +308,12 @@ func (m *InterfaceManager) doRemoveProfiles(task *state.Task, tomb *tomb.Tomb) e
 	}
 	snapName := snapSetup.InstanceName()
 
-	return m.removeProfilesForSnap(task, tomb, snapName, perfTimings)
+	if err := m.removeProfilesForSnap(task, tomb, snapName, perfTimings); err != nil {
+		return err
+	}
+
+	// no pending profiles on disk
+	return setPendingProfilesSideInfo(task.State(), snapName, nil)
 }
 
 func (m *InterfaceManager) removeProfilesForSnap(task *state.Task, _ *tomb.Tomb, snapName string, tm timings.Measurer) error {
@@ -355,7 +387,10 @@ func (m *InterfaceManager) undoSetupProfiles(task *state.Task, tomb *tomb.Tomb) 
 		if err != nil {
 			return err
 		}
-		return m.setupProfilesForSnap(task, tomb, snapInfo, opts, perfTimings)
+		if err := m.setupProfilesForSnap(task, tomb, snapInfo, opts, perfTimings); err != nil {
+			return err
+		}
+		return setPendingProfilesSideInfo(task.State(), snapName, sideInfo)
 	}
 }
 
@@ -384,7 +419,7 @@ func (m *InterfaceManager) doDiscardConns(task *state.Task, _ *tomb.Tomb) error 
 	if err != nil {
 		return err
 	}
-	removed := make(map[string]*connState)
+	removed := make(map[string]*schema.ConnState)
 	for id := range conns {
 		connRef, err := interfaces.ParseConnRef(id)
 		if err != nil {
@@ -405,7 +440,7 @@ func (m *InterfaceManager) undoDiscardConns(task *state.Task, _ *tomb.Tomb) erro
 	st.Lock()
 	defer st.Unlock()
 
-	var removed map[string]*connState
+	var removed map[string]*schema.ConnState
 	err := task.Get("removed", &removed)
 	if err != nil && !errors.Is(err, state.ErrNoState) {
 		return err
@@ -584,7 +619,7 @@ func (m *InterfaceManager) doConnect(task *state.Task, _ *tomb.Tomb) (err error)
 		task.Set("old-conn", old)
 	}
 
-	conns[connRef.ID()] = &connState{
+	conns[connRef.ID()] = &schema.ConnState{
 		Interface:        conn.Interface(),
 		StaticPlugAttrs:  conn.Plug.StaticAttrs(),
 		DynamicPlugAttrs: conn.Plug.DynamicAttrs(),
@@ -720,7 +755,7 @@ func (m *InterfaceManager) undoDisconnect(task *state.Task, _ *tomb.Tomb) error 
 	perfTimings := state.TimingsForTask(task)
 	defer perfTimings.Save(st)
 
-	var oldconn connState
+	var oldconn schema.ConnState
 	err := task.Get("old-conn", &oldconn)
 	if errors.Is(err, state.ErrNoState) {
 		return nil
@@ -817,7 +852,7 @@ func (m *InterfaceManager) undoConnect(task *state.Task, _ *tomb.Tomb) error {
 		return err
 	}
 
-	var old connState
+	var old schema.ConnState
 	err = task.Get("old-conn", &old)
 	if err != nil && !errors.Is(err, state.ErrNoState) {
 		return err
@@ -913,6 +948,12 @@ func checkAutoconnectConflicts(st *state.State, autoconnectTask *state.Task, plu
 
 		k := task.Kind()
 		if k == "connect" || k == "disconnect" {
+			// if the task depends on the auto-connect in some way, then we assume that it is safe to go ahead
+			// as it was scheduled by that exact task, and we should not block for that.
+			if inSameChangeWaitChain(autoconnectTask, task) {
+				continue
+			}
+
 			// retry if we found another connect/disconnect affecting same snap; note we can only encounter
 			// connects/disconnects created by doAutoDisconnect / doAutoConnect here as manual interface ops
 			// are rejected by conflict check logic in snapstate.
@@ -960,6 +1001,13 @@ func checkAutoconnectConflicts(st *state.State, autoconnectTask *state.Task, plu
 			if k == "discard-snap" && autoconnectTask.Change() != nil && autoconnectTask.Change().ID() == task.Change().ID() {
 				continue
 			}
+
+			// setup-profiles will be scheduled when we schedule the connect hooks during pre-seed, and they are postponed until
+			// after pre-seeding. They will still cause a conflict here, so take that into account.
+			if k == "setup-profiles" && inSameChangeWaitChain(autoconnectTask, task) {
+				continue
+			}
+
 			// if snap is getting removed, we will retry but the snap will be gone and auto-connect becomes no-op
 			// if snap is getting installed/refreshed - temporary conflict, retry later
 			return &state.Retry{After: connectRetryTimeout, Reason: fmt.Sprintf("conflicting snap %s with task %q", otherSnapName, k)}

@@ -70,8 +70,8 @@ func (r *refreshHints) needsUpdate() (bool, error) {
 }
 
 func (r *refreshHints) refresh() error {
-	var refreshManaged bool
-	refreshManaged, _, _ = refreshScheduleManaged(r.state)
+	scheduleConf, _, _ := getRefreshScheduleConf(r.state)
+	refreshManaged := scheduleConf == "managed" && CanManageRefreshes(r.state)
 
 	var err error
 	perfTimings := timings.New(map[string]string{"ensure": "refresh-hints"})
@@ -80,7 +80,7 @@ func (r *refreshHints) refresh() error {
 	var updates []*snap.Info
 	var ignoreValidationByInstanceName map[string]bool
 	timings.Run(perfTimings, "refresh-candidates", "query store for refresh candidates", func(tm timings.Measurer) {
-		updates, _, ignoreValidationByInstanceName, err = refreshCandidates(auth.EnsureContextTODO(), r.state, nil, nil, &store.RefreshOptions{RefreshManaged: refreshManaged})
+		updates, _, ignoreValidationByInstanceName, err = refreshCandidates(auth.EnsureContextTODO(), r.state, nil, nil, nil, &store.RefreshOptions{RefreshManaged: refreshManaged})
 	})
 	// TODO: we currently set last-refresh-hints even when there was an
 	// error. In the future we may retry with a backoff.
@@ -184,8 +184,10 @@ func refreshHintsFromCandidates(st *state.State, updates []*snap.Info, ignoreVal
 				PlugsOnly:    len(update.Slots) == 0,
 				InstanceKey:  update.InstanceKey,
 				auxStoreInfo: auxStoreInfo{
-					Website: update.Website,
-					Media:   update.Media,
+					Media: update.Media,
+					// XXX we store this for the benefit of
+					// old snapd
+					Website: update.Website(),
 				},
 			},
 			Version: update.Version,

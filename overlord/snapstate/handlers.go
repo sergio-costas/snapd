@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2016-2021 Canonical Ltd
+ * Copyright (C) 2016-2022 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -34,6 +34,7 @@ import (
 
 	"gopkg.in/tomb.v2"
 
+	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/asserts/snapasserts"
 	"github.com/snapcore/snapd/boot"
 	"github.com/snapcore/snapd/client"
@@ -1184,6 +1185,7 @@ func (m *SnapManager) undoUnlinkCurrentSnap(t *state.Task, _ *tomb.Tomb) error {
 	}
 	linkCtx := backend.LinkContext{
 		FirstInstall:   false,
+		IsUndo:         true,
 		ServiceOptions: opts,
 	}
 	reboot, err := m.backend.LinkSnap(oldInfo, deviceCtx, linkCtx, perfTimings)
@@ -1199,8 +1201,7 @@ func (m *SnapManager) undoUnlinkCurrentSnap(t *state.Task, _ *tomb.Tomb) error {
 
 	// if we just put back a previous a core snap, request a restart
 	// so that we switch executing its snapd
-	m.maybeRestart(t, oldInfo, reboot)
-	return nil
+	return m.finishTaskWithMaybeRestart(t, state.UndoneStatus, restartPossibility{info: oldInfo, RebootInfo: reboot})
 }
 
 func (m *SnapManager) doCopySnapData(t *state.Task, _ *tomb.Tomb) (err error) {
@@ -1223,6 +1224,13 @@ func (m *SnapManager) doCopySnapData(t *state.Task, _ *tomb.Tomb) (err error) {
 	}
 
 	st.Lock()
+	deviceCtx, err := DeviceCtx(st, t, nil)
+	st.Unlock()
+	if err != nil {
+		return err
+	}
+
+	st.Lock()
 	opts, err := getDirMigrationOpts(st, snapst, snapsup)
 	st.Unlock()
 	if err != nil {
@@ -1231,7 +1239,7 @@ func (m *SnapManager) doCopySnapData(t *state.Task, _ *tomb.Tomb) (err error) {
 
 	dirOpts := opts.getSnapDirOpts()
 	pb := NewTaskProgressAdapterUnlocked(t)
-	if copyDataErr := m.backend.CopySnapData(newInfo, oldInfo, pb, dirOpts); copyDataErr != nil {
+	if copyDataErr := m.backend.CopySnapData(newInfo, oldInfo, dirOpts, pb); copyDataErr != nil {
 		if oldInfo != nil {
 			// there is another revision of the snap, cannot remove
 			// shared data directory
@@ -1253,6 +1261,10 @@ func (m *SnapManager) doCopySnapData(t *state.Task, _ *tomb.Tomb) (err error) {
 			t.Errorf("cannot undo partial snap %q data copy, failed removing shared directory: %v", snapsup.InstanceName(), err)
 		}
 		return copyDataErr
+	}
+
+	if err := m.backend.SetupSnapSaveData(newInfo, deviceCtx, pb); err != nil {
+		return err
 	}
 
 	var oldBase string
@@ -1355,6 +1367,13 @@ func (m *SnapManager) undoCopySnapData(t *state.Task, _ *tomb.Tomb) error {
 		return err
 	}
 
+	st.Lock()
+	deviceCtx, err := DeviceCtx(st, t, nil)
+	st.Unlock()
+	if err != nil {
+		return err
+	}
+
 	// undo migration actions performed in doCopySnapData and set SnapSetup flags
 	// accordingly (they're used in undoUnlinkCurrentSnap to set SnapState)
 	if snapsup.MigratedToExposedHome || snapsup.MigratedHidden || snapsup.UndidHiddenMigration {
@@ -1409,7 +1428,10 @@ func (m *SnapManager) undoCopySnapData(t *state.Task, _ *tomb.Tomb) error {
 
 	dirOpts := opts.getSnapDirOpts()
 	pb := NewTaskProgressAdapterUnlocked(t)
-	if err := m.backend.UndoCopySnapData(newInfo, oldInfo, pb, dirOpts); err != nil {
+	if err := m.backend.UndoCopySnapData(newInfo, oldInfo, dirOpts, pb); err != nil {
+		return err
+	}
+	if err := m.backend.UndoSetupSnapSaveData(newInfo, oldInfo, deviceCtx, pb); err != nil {
 		return err
 	}
 
@@ -1563,6 +1585,13 @@ type LinkSnapParticipant interface {
 	// SnapLinkageChanged is called when a snap is linked or unlinked.
 	// The error is only logged and does not stop the task it is used from.
 	SnapLinkageChanged(st *state.State, instanceName string) error
+}
+
+// LinkSnapParticipantFunc is an adapter from function to LinkSnapParticipant.
+type LinkSnapParticipantFunc func(st *state.State, instanceName string) error
+
+func (f LinkSnapParticipantFunc) SnapLinkageChanged(st *state.State, instanceName string) error {
+	return f(st, instanceName)
 }
 
 var linkSnapParticipants []LinkSnapParticipant
@@ -1871,7 +1900,7 @@ func (m *SnapManager) doLinkSnap(t *state.Task, _ *tomb.Tomb) (err error) {
 	notifyLinkParticipants(t, snapsup.InstanceName())
 
 	// Make sure if state commits and snapst is mutated we won't be rerun
-	t.SetStatus(state.DoneStatus)
+	finalStatus := state.DoneStatus
 
 	// if we just installed a core snap, request a restart
 	// so that we switch executing its snapd.
@@ -1891,10 +1920,11 @@ func (m *SnapManager) doLinkSnap(t *state.Task, _ *tomb.Tomb) (err error) {
 		}
 	}
 	if !rebootInfo.RebootRequired || canReboot {
-		m.maybeRestart(t, newInfo, rebootInfo)
+		return m.finishTaskWithMaybeRestart(t, finalStatus, restartPossibility{info: newInfo, RebootInfo: rebootInfo})
+	} else {
+		t.SetStatus(finalStatus)
+		return nil
 	}
-
-	return nil
 }
 
 func setMigrationFlagsinState(snapst *SnapState, snapsup *SnapSetup) {
@@ -1911,24 +1941,34 @@ func setMigrationFlagsinState(snapst *SnapState, snapsup *SnapSetup) {
 	}
 }
 
-// maybeRestart will schedule a reboot or restart as needed for the
-// just linked snap with info if it's a core or snapd or kernel snap.
-func (m *SnapManager) maybeRestart(t *state.Task, info *snap.Info, rebootInfo boot.RebootInfo) {
+// restartPossibility carries information to decide whether a restart
+// of some form is required. Non-nil pointers to values of it
+// can be used in task code to signal that the task should return
+// invoking finishTaskWithMaybeRestart.
+type restartPossibility struct {
+	info *snap.Info
+	boot.RebootInfo
+}
+
+// finishTaskWithMaybeRestart will set the final status for the task
+// and schedule a reboot or restart as needed for the just linked snap
+// passed in through the restartPossibility parameter, based on the
+// snap type.
+func (m *SnapManager) finishTaskWithMaybeRestart(t *state.Task, status state.Status, restartPoss restartPossibility) error {
 	// Don't restart when preseeding - we will switch to new snapd on
 	// first boot.
 	if m.preseed {
-		return
+		return nil
 	}
 
 	st := t.State()
 
-	if rebootInfo.RebootRequired {
+	if restartPoss.RebootRequired {
 		t.Logf("Requested system restart.")
-		RestartSystem(t, &rebootInfo)
-		return
+		return FinishTaskWithRestart(t, status, restart.RestartSystem, &restartPoss.RebootInfo)
 	}
 
-	typ := info.Type()
+	typ := restartPoss.info.Type()
 
 	// If the type of the snap requesting this start is non-trivial that either
 	// means we are on Ubuntu Core and the type is a base/kernel/gadget which
@@ -1942,11 +1982,11 @@ func (m *SnapManager) maybeRestart(t *state.Task, info *snap.Info, rebootInfo bo
 	restartReason := daemonRestartReason(st, typ)
 	if restartReason == "" {
 		// no message -> no restart
-		return
+		return nil
 	}
 
 	t.Logf(restartReason)
-	restart.Request(st, restart.RestartDaemon, nil)
+	return FinishTaskWithRestart(t, status, restart.RestartDaemon, nil)
 }
 
 func daemonRestartReason(st *state.State, typ snap.Type) string {
@@ -1972,15 +2012,16 @@ func daemonRestartReason(st *state.State, typ snap.Type) string {
 // bootloader. This can happen if e.g. a new kernel gets installed. This
 // will switch the bootloader to the new kernel but if the change is later
 // undone we need to switch back to the kernel of the old model.
-func (m *SnapManager) maybeUndoRemodelBootChanges(t *state.Task) error {
+// It returns a non-nil *restartPossibility if a restart should be considered.
+func (m *SnapManager) maybeUndoRemodelBootChanges(t *state.Task) (*restartPossibility, error) {
 	// get the new and the old model
 	deviceCtx, err := DeviceCtx(t.State(), t, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// we only have an old model if we are in a remodel situation
 	if !deviceCtx.ForRemodeling() {
-		return nil
+		return nil, nil
 	}
 	groundDeviceCtx := deviceCtx.GroundContext()
 	oldModel := groundDeviceCtx.Model()
@@ -1990,7 +2031,7 @@ func (m *SnapManager) maybeUndoRemodelBootChanges(t *state.Task) error {
 	// relevant
 	snapsup, _, err := snapSetupAndState(t)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var newSnapName, snapName string
 	switch snapsup.Type {
@@ -2002,38 +2043,36 @@ func (m *SnapManager) maybeUndoRemodelBootChanges(t *state.Task) error {
 		snapName = oldModel.Base()
 		newSnapName = newModel.Base()
 	default:
-		return nil
+		return nil, nil
 	}
 	// we can stop if the kernel/base has not changed
 	if snapName == newSnapName {
-		return nil
+		return nil, nil
 	}
 	// we can stop if the snap we are looking at is not a kernel/base
 	// of the new model
 	if snapsup.InstanceName() != newSnapName {
-		return nil
+		return nil, nil
 	}
 	// get info for *old* kernel/base/core and see if we need to reboot
 	// TODO: we may need something like infoForDeviceSnap here
 	var snapst SnapState
 	if err = Get(t.State(), snapName, &snapst); err != nil {
-		return err
+		return nil, err
 	}
 	info, err := snapst.CurrentInfo()
 	if err != nil && err != ErrNoCurrent {
-		return err
+		return nil, err
 	}
 	bp := boot.Participant(info, info.Type(), groundDeviceCtx)
-	rebootInfo, err := bp.SetNextBoot()
+	rebootInfo, err := bp.SetNextBoot(boot.NextBootContext{BootWithoutTry: true})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// we may just have switch back to the old kernel/base/core so
 	// we may need to restart
-	m.maybeRestart(t, info, rebootInfo)
-
-	return nil
+	return &restartPossibility{info: info, RebootInfo: rebootInfo}, nil
 }
 
 func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
@@ -2195,6 +2234,7 @@ func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
 	firstInstall := oldCurrent.Unset()
 	linkCtx := backend.LinkContext{
 		FirstInstall: firstInstall,
+		IsUndo:       true,
 	}
 	var backendErr error
 	if newInfo.Type() == snap.TypeSnapd && !firstInstall {
@@ -2217,7 +2257,10 @@ func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
 		return backendErr
 	}
 
-	if err := m.maybeUndoRemodelBootChanges(t); err != nil {
+	// restartPoss will be set if we should maybe schedule a restart
+	var restartPoss *restartPossibility
+	restartPoss, err = m.maybeUndoRemodelBootChanges(t)
+	if err != nil {
 		return err
 	}
 
@@ -2226,7 +2269,7 @@ func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
 	// when reverting a subsequent snapd revision, the restart happens in
 	// undoLinkCurrentSnap() instead
 	if firstInstall && newInfo.Type() == snap.TypeSnapd {
-		m.maybeRestart(t, newInfo, boot.RebootInfo{RebootRequired: false})
+		restartPoss = &restartPossibility{info: newInfo, RebootInfo: boot.RebootInfo{RebootRequired: false}}
 	}
 
 	// write sequence file for failover helpers
@@ -2239,8 +2282,16 @@ func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
 	// Notify link snap participants about link changes.
 	notifyLinkParticipants(t, snapsup.InstanceName())
 
+	// Finish task: set status, possibly restart
+
 	// Make sure if state commits and snapst is mutated we won't be rerun
-	t.SetStatus(state.UndoneStatus)
+	finalStatus := state.UndoneStatus
+	t.SetStatus(finalStatus)
+
+	// should we maybe restart?
+	if restartPoss != nil {
+		return m.finishTaskWithMaybeRestart(t, finalStatus, *restartPoss)
+	}
 
 	// If we are on classic and have no previous version of core
 	// we may have restarted from a distro package into the core
@@ -2249,8 +2300,9 @@ func (m *SnapManager) undoLinkSnap(t *state.Task, _ *tomb.Tomb) error {
 	// core snap -> next core snap
 	if release.OnClassic && newInfo.Type() == snap.TypeOS && oldCurrent.Unset() {
 		t.Logf("Requested daemon restart (undo classic initial core install)")
-		restart.Request(st, restart.RestartDaemon, nil)
+		return FinishTaskWithRestart(t, finalStatus, restart.RestartDaemon, nil)
 	}
+
 	return nil
 }
 
@@ -2342,7 +2394,11 @@ func installModeDisabledServices(st *state.State, snapst *SnapState, currentInfo
 	prevCurrentSvcs := map[string]bool{}
 	if psi := snapst.previousSideInfo(); psi != nil {
 		var prevCurrentInfo *snap.Info
-		if prevCurrentInfo, err = Info(st, snapst.InstanceName(), psi.Revision); prevCurrentInfo != nil {
+		prevCurrentInfo, err = Info(st, snapst.InstanceName(), psi.Revision)
+		if err != nil {
+			return nil, err
+		}
+		if prevCurrentInfo != nil {
 			for _, prevSvc := range prevCurrentInfo.Services() {
 				prevCurrentSvcs[prevSvc.Name] = true
 			}
@@ -2704,6 +2760,7 @@ func (m *SnapManager) undoUnlinkSnap(t *state.Task, _ *tomb.Tomb) error {
 	}
 	linkCtx := backend.LinkContext{
 		FirstInstall:   false,
+		IsUndo:         true,
 		ServiceOptions: opts,
 	}
 	reboot, err := m.backend.LinkSnap(info, deviceCtx, linkCtx, perfTimings)
@@ -2716,9 +2773,7 @@ func (m *SnapManager) undoUnlinkSnap(t *state.Task, _ *tomb.Tomb) error {
 
 	// if we just linked back a core snap, request a restart
 	// so that we switch executing its snapd.
-	m.maybeRestart(t, info, reboot)
-
-	return nil
+	return m.finishTaskWithMaybeRestart(t, state.UndoneStatus, restartPossibility{info: info, RebootInfo: reboot})
 }
 
 func (m *SnapManager) doClearSnapData(t *state.Task, _ *tomb.Tomb) error {
@@ -2740,7 +2795,6 @@ func (m *SnapManager) doClearSnapData(t *state.Task, _ *tomb.Tomb) error {
 	st.Lock()
 	opts, err := getDirMigrationOpts(st, snapst, snapsup)
 	st.Unlock()
-
 	if err != nil {
 		return err
 	}
@@ -2753,6 +2807,18 @@ func (m *SnapManager) doClearSnapData(t *state.Task, _ *tomb.Tomb) error {
 	if len(snapst.Sequence) == 1 {
 		// Only remove data common between versions if this is the last version
 		if err = m.backend.RemoveSnapCommonData(info, dirOpts); err != nil {
+			return err
+		}
+
+		// Same for the common snap save data directory, we only remove it if this
+		// is the last version.
+		st.Lock()
+		deviceCtx, err := DeviceCtx(t.State(), t, nil)
+		st.Unlock()
+		if err != nil {
+			return err
+		}
+		if err = m.backend.RemoveSnapSaveData(info, deviceCtx); err != nil {
 			return err
 		}
 
@@ -3599,7 +3665,7 @@ func (m *SnapManager) doCheckReRefresh(t *state.Task, tomb *tomb.Tomb) error {
 		return err
 	}
 
-	updated, tasksets, err := reRefreshUpdateMany(tomb.Context(nil), st, snaps, re.UserID, reRefreshFilter, re.Flags, chg.ID())
+	updated, tasksets, err := reRefreshUpdateMany(tomb.Context(nil), st, snaps, nil, re.UserID, reRefreshFilter, re.Flags, chg.ID())
 	if err != nil {
 		return err
 	}
@@ -3718,6 +3784,52 @@ func (m *SnapManager) undoMigrateSnapHome(t *state.Task, tomb *tomb.Tomb) error 
 	st.Lock()
 	defer st.Unlock()
 	return writeMigrationStatus(t, snapst, snapsup)
+}
+
+func (m *SnapManager) doEnforceValidationSets(t *state.Task, _ *tomb.Tomb) error {
+	st := t.State()
+	st.Lock()
+	defer st.Unlock()
+
+	var userID int
+	if err := t.Get("userID", &userID); err != nil {
+		return err
+	}
+
+	encodedAsserts := make(map[string][]byte)
+	if err := t.Get("validation-sets", &encodedAsserts); err != nil {
+		return err
+	}
+
+	decodedAsserts := make(map[string]*asserts.ValidationSet, len(encodedAsserts))
+	for vsStr, encAssert := range encodedAsserts {
+		decAssert, err := asserts.Decode(encAssert)
+		if err != nil {
+			return err
+		}
+
+		vsAssert, ok := decAssert.(*asserts.ValidationSet)
+		if !ok {
+			return errors.New("expected encoded assertion to be of type ValidationSet")
+		}
+		decodedAsserts[vsStr] = vsAssert
+	}
+
+	var pinnedSeqs map[string]int
+	if err := t.Get("pinned-sequence-numbers", &pinnedSeqs); err != nil {
+		return err
+	}
+
+	snaps, ignoreValidation, err := InstalledSnaps(st)
+	if err != nil {
+		return err
+	}
+
+	if err := EnforceValidationSets(st, decodedAsserts, pinnedSeqs, snaps, ignoreValidation, userID); err != nil {
+		return fmt.Errorf("cannot enforce validation sets: %v", err)
+	}
+
+	return nil
 }
 
 // maybeRestoreValidationSetsAndRevertSnaps restores validation-sets to their

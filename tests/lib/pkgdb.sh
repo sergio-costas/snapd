@@ -172,16 +172,6 @@ distro_install_package() {
         ;;
     esac
 
-    # fix dependency issue where libp11-kit0 needs to be downgraded to
-    # install gnome-keyring
-    case "$SPREAD_SYSTEM" in
-        debian-9-*)
-        if [[ "$*" =~ "gnome-keyring" ]]; then
-            eatmydata apt-get remove -y libp11-kit0
-        fi
-        ;;
-    esac
-
     # shellcheck disable=SC2207
     pkg_names=($(
         for pkg in "$@" ; do
@@ -608,27 +598,31 @@ pkg_dependencies_ubuntu_classic(){
                 qemu-utils
                 "
             ;;
-        ubuntu-20.04-64)
+        ubuntu-20.04-64|ubuntu-20.04-arm-64)
+            # bpftool is part of linux-tools package
             echo "
                 dbus-user-session
                 evolution-data-server
                 fwupd
                 gccgo-9
                 libvirt-daemon-system
+                linux-tools-$(uname -r)
                 packagekit
                 qemu-kvm
                 qemu-utils
                 shellcheck
                 "
             ;;
-        ubuntu-21.10-64|ubuntu-22.04-64)
+        ubuntu-22.04-64|ubuntu-22.04-arm-64|ubuntu-22.10-64)
             # bpftool is part of linux-tools package
             echo "
                 dbus-user-session
                 fwupd
                 golang
+                libvirt-daemon-system
                 linux-tools-$(uname -r)
                 lz4
+                qemu-kvm
                 qemu-utils
                 "
             ;;
@@ -694,7 +688,6 @@ pkg_dependencies_fedora_centos_common(){
         dbus-x11
         evolution-data-server
         expect
-        fish
         fontconfig
         fwupd
         git
@@ -710,7 +703,6 @@ pkg_dependencies_fedora_centos_common(){
         python3-yaml
         python3-dbus
         python3-gobject
-        redhat-lsb-core
         rpm-build
         udisks2
         upower
@@ -719,6 +711,12 @@ pkg_dependencies_fedora_centos_common(){
         strace
         zsh
         "
+    if ! os.query is-centos 9; then
+        echo "
+            fish
+            redhat-lsb-core
+        "
+    fi
 }
 
 pkg_dependencies_fedora(){
@@ -793,6 +791,12 @@ pkg_dependencies_opensuse(){
         xdg-utils
         zsh
         "
+    if os.query is-opensuse tumbleweed; then
+        echo "
+            libfwupd2
+            libfwupdplugin5
+        "
+    fi
 }
 
 pkg_dependencies_arch(){

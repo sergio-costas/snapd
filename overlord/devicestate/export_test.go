@@ -22,6 +22,7 @@ package devicestate
 import (
 	"context"
 	"net/http"
+	"os/user"
 	"time"
 
 	"github.com/snapcore/snapd/asserts"
@@ -30,18 +31,23 @@ import (
 	"github.com/snapcore/snapd/gadget/install"
 	"github.com/snapcore/snapd/httputil"
 	"github.com/snapcore/snapd/kernel/fde"
+	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
 	"github.com/snapcore/snapd/overlord/storecontext"
 	"github.com/snapcore/snapd/secboot"
 	"github.com/snapcore/snapd/secboot/keys"
 	"github.com/snapcore/snapd/seed"
+	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/sysconfig"
 	"github.com/snapcore/snapd/testutil"
 	"github.com/snapcore/snapd/timings"
 )
 
-var SystemForPreseeding = systemForPreseeding
+var (
+	SystemForPreseeding         = systemForPreseeding
+	GetUserDetailsFromAssertion = getUserDetailsFromAssertion
+)
 
 func MockKeyLength(n int) (restore func()) {
 	if n < 1024 {
@@ -131,8 +137,10 @@ func SetTimeOnce(m *DeviceManager, name string, t time.Time) error {
 	return m.setTimeOnce(name, t)
 }
 
-func PreloadGadget(m *DeviceManager) (sysconfig.Device, *gadget.Info, error) {
-	return m.preloadGadget()
+func EarlyPreloadGadget(m *DeviceManager) (sysconfig.Device, *gadget.Info, error) {
+	// let things fully run again
+	m.seedTimings = nil
+	return m.earlyPreloadGadget()
 }
 
 func MockLoadDeviceSeed(f func(st *state.State, sysLabel string) (seed.Seed, error)) func() {
@@ -205,6 +213,10 @@ func SetInstalledRan(m *DeviceManager, b bool) {
 
 func SetTriedSystemsRan(m *DeviceManager, b bool) {
 	m.ensureTriedRecoverySystemRan = b
+}
+
+func SetPostFactoryResetRan(m *DeviceManager, b bool) {
+	m.ensurePostFactoryResetRan = b
 }
 
 func StartTime() time.Time {
@@ -360,6 +372,12 @@ func MockSecbootStageEncryptionKeyChange(f func(node string, key keys.Encryption
 	return restore
 }
 
+func MockSecbootTransitionEncryptionKeyChange(f func(mountpoint string, key keys.EncryptionKey) error) (restore func()) {
+	restore = testutil.Backup(&secbootTransitionEncryptionKeyChange)
+	secbootTransitionEncryptionKeyChange = f
+	return restore
+}
+
 func MockCloudInitStatus(f func() (sysconfig.CloudInitState, error)) (restore func()) {
 	old := cloudInitStatus
 	cloudInitStatus = f
@@ -376,8 +394,8 @@ func MockRestrictCloudInit(f func(sysconfig.CloudInitState, *sysconfig.CloudInit
 	}
 }
 
-func DeviceManagerHasFDESetupHook(mgr *DeviceManager) (bool, error) {
-	return mgr.hasFDESetupHook()
+func DeviceManagerHasFDESetupHook(mgr *DeviceManager, kernelInfo *snap.Info) (bool, error) {
+	return mgr.hasFDESetupHook(kernelInfo)
 }
 
 func DeviceManagerRunFDESetupHook(mgr *DeviceManager, req *fde.SetupRequest) ([]byte, error) {
@@ -386,6 +404,10 @@ func DeviceManagerRunFDESetupHook(mgr *DeviceManager, req *fde.SetupRequest) ([]
 
 func DeviceManagerCheckEncryption(mgr *DeviceManager, st *state.State, deviceCtx snapstate.DeviceContext) (secboot.EncryptionType, error) {
 	return mgr.checkEncryption(st, deviceCtx)
+}
+
+func DeviceManagerEncryptionSupportInfo(mgr *DeviceManager, model *asserts.Model, kernelInfo *snap.Info, gadgetInfo *gadget.Info) (EncryptionSupportInfo, error) {
+	return mgr.encryptionSupportInfo(model, kernelInfo, gadgetInfo)
 }
 
 func DeviceManagerCheckFDEFeatures(mgr *DeviceManager, st *state.State) (secboot.EncryptionType, error) {
@@ -421,5 +443,51 @@ func MockSecbootEnsureRecoveryKey(f func(recoveryKeyFile string, rkeyDevs []secb
 func MockSecbootRemoveRecoveryKeys(f func(rkeyDevToKey map[secboot.RecoveryKeyDevice]string) error) (restore func()) {
 	restore = testutil.Backup(&secbootRemoveRecoveryKeys)
 	secbootRemoveRecoveryKeys = f
+	return restore
+}
+
+func MockMarkFactoryResetComplete(f func(encrypted bool) error) (restore func()) {
+	restore = testutil.Backup(&bootMarkFactoryResetComplete)
+	bootMarkFactoryResetComplete = f
+	return restore
+}
+
+func MockSecbootMarkSuccessful(f func() error) (restore func()) {
+	r := testutil.Backup(&secbootMarkSuccessful)
+	secbootMarkSuccessful = f
+	return r
+}
+
+func BuildGroundDeviceContext(model *asserts.Model, mode string) snapstate.DeviceContext {
+	return &groundDeviceContext{model: model, systemMode: mode}
+}
+
+func MockOsutilAddUser(addUser func(name string, opts *osutil.AddUserOptions) error) (restore func()) {
+	restore = testutil.Backup(&osutilAddUser)
+	osutilAddUser = addUser
+	return restore
+}
+
+func MockOsutilDelUser(delUser func(name string, opts *osutil.DelUserOptions) error) (restore func()) {
+	restore = testutil.Backup(&osutilDelUser)
+	osutilDelUser = delUser
+	return restore
+}
+
+func MockUserLookup(lookup func(username string) (*user.User, error)) (restore func()) {
+	restore = testutil.Backup(&userLookup)
+	userLookup = lookup
+	return restore
+}
+
+func EnsureExpiredUsersRemoved(m *DeviceManager) error {
+	return m.ensureExpiredUsersRemoved()
+}
+
+var ProcessAutoImportAssertions = processAutoImportAssertions
+
+func MockCreateAllKnownSystemUsers(createAllUsers func(state *state.State, assertDb asserts.RODatabase, model *asserts.Model, serial *asserts.Serial, sudoer bool) ([]*CreatedUser, error)) (restore func()) {
+	restore = testutil.Backup(&createAllKnownSystemUsers)
+	createAllKnownSystemUsers = createAllUsers
 	return restore
 }

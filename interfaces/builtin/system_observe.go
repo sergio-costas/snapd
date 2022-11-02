@@ -19,6 +19,18 @@
 
 package builtin
 
+import (
+	"path/filepath"
+
+	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/interfaces"
+	"github.com/snapcore/snapd/interfaces/apparmor"
+	"github.com/snapcore/snapd/interfaces/mount"
+	"github.com/snapcore/snapd/logger"
+	"github.com/snapcore/snapd/osutil"
+	"github.com/snapcore/snapd/snap"
+)
+
 const systemObserveSummary = `allows observing all processes and drivers`
 
 const systemObserveBaseDeclarationSlots = `
@@ -50,6 +62,7 @@ const systemObserveConnectedPlugAppArmor = `
 ptrace (read),
 
 # Other miscellaneous accesses for observing the system
+@{PROC}/cgroups r,
 @{PROC}/locks r,
 @{PROC}/modules r,
 @{PROC}/stat r,
@@ -66,6 +79,7 @@ ptrace (read),
 @{PROC}/sys/kernel/sched_autogroup_enabled r,
 @{PROC}/sys/vm/max_map_count r,
 @{PROC}/sys/vm/panic_on_oom r,
+@{PROC}/sys/vm/swappiness r,
 
 # These are not process-specific (/proc/*/... and /proc/*/task/*/...)
 @{PROC}/*/{,task/,task/*/} r,
@@ -87,9 +101,16 @@ ptrace (read),
 @{PROC}/*/{,task/*/}status r,
 @{PROC}/*/{,task/*/}wchan r,
 
+# Allow reading processes security label
+@{PROC}/*/{,task/*/}attr/{,apparmor/}current r,
+
 # Allow discovering the os-release of the host
 /var/lib/snapd/hostfs/etc/os-release rk,
 /var/lib/snapd/hostfs/usr/lib/os-release rk,
+
+# Allow discovering the Kernel build config
+@{PROC}/config.gz r,
+/boot/config* r,
 
 # Allow discovering system-wide CFS Bandwidth Control information
 # https://www.kernel.org/doc/html/latest/scheduler/sched-bwc.html
@@ -97,6 +118,7 @@ ptrace (read),
 /sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us r,
 /sys/fs/cgroup/cpu,cpuacct/cpu.shares r,
 /sys/fs/cgroup/cpu,cpuacct/cpu.stat r,
+/sys/fs/cgroup/memory/memory.stat r,
 
 #include <abstractions/dbus-strict>
 
@@ -152,15 +174,53 @@ const systemObserveConnectedPlugSecComp = `
 #@deny ptrace
 `
 
+type systemObserveInterface struct {
+	commonInterface
+}
+
+func (iface *systemObserveInterface) AppArmorConnectedPlug(spec *apparmor.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
+	spec.AddSnippet(systemObserveConnectedPlugAppArmor)
+	spec.SetSuppressPtraceTrace()
+	// Allow mounting boot partition to snap-update-ns
+	emit := spec.AddUpdateNSf
+	target := "/boot"
+	source := "/var/lib/snapd/hostfs" + target
+	emit("  # Read-only access to %s", target)
+	// When setting up a read-only bind mount, snap-update-ns first creates a
+	// plain read/write bind mount, and then remounts it to readonly.
+	emit("  mount options=(bind,rw) %s/ -> %s/,", source, target)
+	emit("  mount options=(bind,remount,ro) -> %s/,", target)
+	emit("  umount %s/,\n", target)
+	return nil
+}
+
+func (iface *systemObserveInterface) MountPermanentPlug(spec *mount.Specification, plug *snap.PlugInfo) error {
+	dir := filepath.Join(dirs.GlobalRootDir, "/boot")
+	if matches, _ := filepath.Glob(filepath.Join(dir, "config*")); len(matches) > 0 {
+		spec.AddMountEntry(osutil.MountEntry{
+			Name:    "/var/lib/snapd/hostfs" + dir,
+			Dir:     "/boot",
+			Options: []string{"bind", "ro"},
+		})
+	} else {
+		// TODO: if /boot/config does not exist, we should check whether the
+		// kernel is being delivered as a snap (this is the case in Ubuntu
+		// Core) and, if found, we should bind-mount the config file onto the
+		// expected location.
+		logger.Debugf("system-observe: /boot/config* not found, skipping mount of /boot/")
+	}
+	return nil
+}
+
 func init() {
-	registerIface(&commonInterface{
-		name:                  "system-observe",
-		summary:               systemObserveSummary,
-		implicitOnCore:        true,
-		implicitOnClassic:     true,
-		baseDeclarationSlots:  systemObserveBaseDeclarationSlots,
-		connectedPlugAppArmor: systemObserveConnectedPlugAppArmor,
-		connectedPlugSecComp:  systemObserveConnectedPlugSecComp,
-		suppressPtraceTrace:   true,
+	registerIface(&systemObserveInterface{
+		commonInterface: commonInterface{
+			name:                 "system-observe",
+			summary:              systemObserveSummary,
+			implicitOnCore:       true,
+			implicitOnClassic:    true,
+			baseDeclarationSlots: systemObserveBaseDeclarationSlots,
+			connectedPlugSecComp: systemObserveConnectedPlugSecComp,
+		},
 	})
 }

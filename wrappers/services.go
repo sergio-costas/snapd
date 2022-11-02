@@ -100,8 +100,8 @@ CPUAccounting=true
 		fmt.Fprintf(buf, "CPUQuota=%d%%\n", min(cpuQuotaSnap, cpuQuotaMax))
 	}
 
-	if grp.CPULimit != nil && len(grp.CPULimit.AllowedCPUs) != 0 {
-		allowedCpusValue := strutil.IntsToCommaSeparated(grp.CPULimit.AllowedCPUs)
+	if grp.CPULimit != nil && len(grp.CPULimit.CPUSet) != 0 {
+		allowedCpusValue := strutil.IntsToCommaSeparated(grp.CPULimit.CPUSet)
 		fmt.Fprintf(buf, "AllowedCPUs=%s\n", allowedCpusValue)
 	}
 
@@ -132,8 +132,8 @@ TasksAccounting=true
 `
 	buf := bytes.NewBufferString(header)
 
-	if grp.TaskLimit != 0 {
-		fmt.Fprintf(buf, "TasksMax=%d\n", grp.TaskLimit)
+	if grp.ThreadLimit != 0 {
+		fmt.Fprintf(buf, "TasksMax=%d\n", grp.ThreadLimit)
 	}
 	return buf.String()
 }
@@ -169,7 +169,7 @@ RuntimeMaxUse=%[1]d
 }
 
 func formatJournalRateConf(grp *quota.Group) string {
-	if grp.JournalLimit.RateCount == 0 || grp.JournalLimit.RatePeriod == 0 {
+	if !grp.JournalLimit.RateEnabled {
 		return ""
 	}
 	return fmt.Sprintf(`RateLimitIntervalSec=%dus
@@ -184,8 +184,15 @@ func generateJournaldConfFile(grp *quota.Group) []byte {
 
 	sizeOptions := formatJournalSizeConf(grp)
 	rateOptions := formatJournalRateConf(grp)
+	// Set Storage=auto for all journal namespaces we create. This is
+	// the setting for the default namespace, and 'persistent' is the default
+	// setting for all namespaces. However we want namespaces to honor the
+	// journal.persistent setting, and this only works if Storage is set
+	// to 'auto'.
+	// See https://www.freedesktop.org/software/systemd/man/journald.conf.html#Storage=
 	template := `# Journald configuration for snap quota group %[1]s
 [Journal]
+Storage=auto
 `
 	buf := bytes.Buffer{}
 	fmt.Fprintf(&buf, template, grp.Name)
@@ -731,12 +738,12 @@ func (es *ensureSnapServicesContext) ensureSnapSlices(quotaGroups *quota.QuotaGr
 
 func (es *ensureSnapServicesContext) ensureSnapJournaldUnits(quotaGroups *quota.QuotaGroupSet) error {
 	handleJournalModification := func(grp *quota.Group, path string, content []byte) error {
-		old, modifiedFile, err := tryFileUpdate(path, content)
+		old, fileModified, err := tryFileUpdate(path, content)
 		if err != nil {
 			return err
 		}
 
-		if !modifiedFile {
+		if !fileModified {
 			return nil
 		}
 
@@ -761,13 +768,53 @@ func (es *ensureSnapServicesContext) ensureSnapJournaldUnits(quotaGroups *quota.
 
 	for _, grp := range quotaGroups.AllQuotaGroups() {
 		contents := generateJournaldConfFile(grp)
-		fileName := grp.JournalFileName()
+		fileName := grp.JournalConfFileName()
 
 		path := filepath.Join(dirs.SnapSystemdDir, fileName)
 		if err := handleJournalModification(grp, path, contents); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+// ensureJournalQuotaServiceUnits takes care of writing service drop-in files for all journal namespaces.
+func (es *ensureSnapServicesContext) ensureJournalQuotaServiceUnits(quotaGroups *quota.QuotaGroupSet) error {
+	handleFileModification := func(grp *quota.Group, path string, content []byte) error {
+		old, fileModified, err := tryFileUpdate(path, content)
+		if err != nil {
+			return err
+		}
+
+		if fileModified {
+			if es.observeChange != nil {
+				var oldContent []byte
+				if old != nil {
+					oldContent = old.Content
+				}
+				es.observeChange(nil, grp, "service", grp.Name, string(oldContent), string(content))
+			}
+			es.modifiedUnits[path] = old
+		}
+		return nil
+	}
+
+	for _, grp := range quotaGroups.AllQuotaGroups() {
+		if grp.JournalLimit == nil {
+			continue
+		}
+
+		if err := os.MkdirAll(grp.JournalServiceDropInDir(), 0755); err != nil {
+			return err
+		}
+
+		dropInPath := grp.JournalServiceDropInFile()
+		content := genJournalServiceFile(grp)
+		if err := handleFileModification(grp, dropInPath, content); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -819,6 +866,10 @@ func EnsureSnapServices(snaps map[*snap.Info]*SnapServiceOptions, opts *EnsureSn
 	}
 
 	if err := context.ensureSnapJournaldUnits(quotaGroups); err != nil {
+		return err
+	}
+
+	if err := context.ensureJournalQuotaServiceUnits(quotaGroups); err != nil {
 		return err
 	}
 
@@ -1320,7 +1371,7 @@ WantedBy={{.ServicesTarget}}
 	if opts.QuotaGroup != nil {
 		wrapperData.SliceUnit = opts.QuotaGroup.SliceFileName()
 		if opts.QuotaGroup.JournalLimit != nil {
-			wrapperData.LogNamespace = "snap-" + opts.QuotaGroup.Name
+			wrapperData.LogNamespace = opts.QuotaGroup.JournalNamespaceName()
 		}
 	}
 
@@ -1405,6 +1456,15 @@ WantedBy={{.SocketsTarget}}
 	}
 
 	return templateOut.Bytes()
+}
+
+func genJournalServiceFile(grp *quota.Group) []byte {
+	buf := bytes.Buffer{}
+	template := `[Service]
+LogsDirectory=
+`
+	fmt.Fprint(&buf, template)
+	return buf.Bytes()
 }
 
 func generateSnapSocketFiles(app *snap.AppInfo) (map[string][]byte, error) {

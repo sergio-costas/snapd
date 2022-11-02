@@ -22,16 +22,15 @@ package gadget
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/snapcore/snapd/asserts"
 	"github.com/snapcore/snapd/dirs"
+	"github.com/snapcore/snapd/gadget/device"
 	"github.com/snapcore/snapd/gadget/quantity"
 	"github.com/snapcore/snapd/kernel"
 	"github.com/snapcore/snapd/logger"
-	"github.com/snapcore/snapd/osutil"
 	"github.com/snapcore/snapd/osutil/disks"
 	"github.com/snapcore/snapd/strutil"
 )
@@ -883,8 +882,7 @@ func buildNewVolumeToDeviceMapping(mod Model, old GadgetData, laidOutVols map[st
 
 		// check if there is a marker file written, that will indicate if
 		// encryption was turned on
-		encryptionMarkerFile := filepath.Join(dirs.SnapFDEDir, "marker")
-		if osutil.FileExists(encryptionMarkerFile) {
+		if device.HasEncryptedMarkerUnder(dirs.SnapFDEDir) {
 			// then we have the crypto marker file for encryption
 			// cross-validation between ubuntu-data and ubuntu-save stored from
 			// install mode, so mark ubuntu-save and data as expected to be
@@ -1242,6 +1240,13 @@ func Update(model Model, old, new GadgetData, rollbackDirPath string, updatePoli
 
 	atLeastOneKernelAssetConsumed := false
 
+	// Layout new volume, delay resolving of filesystem content
+	opts := &LayoutOptions{
+		SkipResolveContent: true,
+		GadgetRootDir:      new.RootDir,
+		KernelRootDir:      new.KernelRootDir,
+	}
+
 	allUpdates := []updatePair{}
 	laidOutVols := map[string]*LaidOutVolume{}
 	for volName, oldVol := range old.Info.Volumes {
@@ -1258,10 +1263,7 @@ func Update(model Model, old, new GadgetData, rollbackDirPath string, updatePoli
 			return fmt.Errorf("cannot lay out the old volume %s: %v", volName, err)
 		}
 
-		// Layout new volume, delay resolving of filesystem content
-		constraints := DefaultConstraints
-		constraints.SkipResolveContent = true
-		pNew, err := LayoutVolume(new.RootDir, new.KernelRootDir, newVol, constraints)
+		pNew, err := LayoutVolume(newVol, DefaultConstraints, opts)
 		if err != nil {
 			return fmt.Errorf("cannot lay out the new volume %s: %v", volName, err)
 		}

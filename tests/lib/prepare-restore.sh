@@ -70,7 +70,7 @@ build_deb(){
     # Use fake version to ensure we are always bigger than anything else
     dch --newversion "1337.$(dpkg-parsechangelog --show-field Version)" "testing build"
 
-    if os.query is-debian-sid; then
+    if os.query is-debian sid; then
         # ensure we really build without vendored packages
         rm -rf vendor/*/*
     fi
@@ -119,7 +119,7 @@ build_rpm() {
 
     # Build our source package
     unshare -n -- \
-            rpmbuild --with testkeys -bs "$packaging_path/snapd.spec"
+            rpmbuild --with testkeys -bs "$rpm_dir/SOURCES/snapd.spec"
 
     # .. and we need all necessary build dependencies available
     deps=()
@@ -138,7 +138,7 @@ build_rpm() {
             --with testkeys \
             --nocheck \
             -ba \
-            "$packaging_path/snapd.spec"
+            "$rpm_dir/SOURCES/snapd.spec"
 
     find "$rpm_dir"/RPMS -name '*.rpm' -exec cp -v {} "${GOPATH%%:*}" \;
 }
@@ -308,7 +308,7 @@ prepare_project() {
     fi
 
     # debian-sid packaging is special
-    if os.query is-debian-sid; then
+    if os.query is-debian sid; then
         if [ ! -d packaging/debian-sid ]; then
             echo "no packaging/debian-sid/ directory "
             echo "broken test setup"
@@ -484,10 +484,7 @@ prepare_project() {
     case "$SPREAD_SYSTEM" in
         debian-*|ubuntu-*)
             best_golang=golang-1.13
-            if [[ "$SPREAD_SYSTEM" == debian-9-* ]]; then
-                echo "debian-9 tests disabled (no golang-1.13)"
-                exit 1
-            elif [[ "$SPREAD_SYSTEM" == debian-10-* ]]; then
+            if [[ "$SPREAD_SYSTEM" == debian-10-* ]]; then
                 # debian-10 needs backports for golang-1.13
                 echo "deb http://deb.debian.org/debian buster-backports main" >> /etc/apt/sources.list
                 apt update
@@ -605,6 +602,9 @@ prepare_suite_each() {
     # because not all suites are triggering it (for example the tools suite doesn't).
     touch "$RUNTIME_STATE_PATH/runs"
     touch "$RUNTIME_STATE_PATH/journalctl_cursor"
+
+    # Clean the dmesg log
+    dmesg --read-clear
 
     # Start fs monitor
     "$TESTSTOOLS"/fs-state start-monitor

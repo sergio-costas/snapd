@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2018-2019 Canonical Ltd
+ * Copyright (C) 2018-2022 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -90,14 +90,29 @@ func (dc groundDeviceContext) Base() string {
 	return dc.model.Base()
 }
 
+func (dc groundDeviceContext) Gadget() string {
+	return dc.model.Gadget()
+}
+
 func (dc groundDeviceContext) RunMode() bool {
 	return dc.systemMode == "run"
 }
 
 // HasModeenv is true if the grade is set
-// TODO:UC20: will classic devices with uc20 models have a modeenv? I think so?
 func (dc groundDeviceContext) HasModeenv() bool {
 	return dc.model.Grade() != asserts.ModelGradeUnset
+}
+
+// IsCoreBoot is true if the model sports a kernel.
+func (d *groundDeviceContext) IsCoreBoot() bool {
+	return d.model.Kernel() != ""
+}
+
+// IsClassicBoot is true for classic systems with classic initramfs
+// (there are no system modes in this case). If true, the kernel comes
+// from debian packages.
+func (d *groundDeviceContext) IsClassicBoot() bool {
+	return !d.IsCoreBoot()
 }
 
 // expected interface is implemented

@@ -65,6 +65,7 @@ plugs:
     options: [ro]
   - what: /dev/sda[0-1]
     where: $SNAP_COMMON/{foo,other,**}
+    type: [mycustomfs]
     options: [sync]
 apps:
  app:
@@ -295,12 +296,14 @@ func (s *MountControlInterfaceSuite) TestAppArmorSpec(c *C) {
 		`reiserfs,squashfs,tmpfs,ubifs,udf,ufs,vfat,zfs,xfs` +
 		`) options=(ro) "/dev/sda{0,1}" -> "/var/snap/consumer/common/**{,/}",`
 	c.Assert(spec.SnippetForTag("snap.consumer.app"), testutil.Contains, expectedMountLine3)
+	expectedUmountLine3 := `umount "/var/snap/consumer/common/**{,/}",`
+	c.Assert(spec.SnippetForTag("snap.consumer.app"), testutil.Contains, expectedUmountLine3)
 
-	expectedMountLine4 := `mount fstype=(` +
-		`aufs,autofs,btrfs,ext2,ext3,ext4,hfs,iso9660,jfs,msdos,ntfs,ramfs,` +
-		`reiserfs,squashfs,tmpfs,ubifs,udf,ufs,vfat,zfs,xfs` +
-		`) options=(sync) "/dev/sda[0-1]" -> "/var/snap/consumer/common/{foo,other,**}{,/}",`
+	expectedMountLine4 := `mount fstype=(mycustomfs) options=(sync) ` +
+		`"/dev/sda[0-1]" -> "/var/snap/consumer/common/{foo,other,**}{,/}",`
 	c.Assert(spec.SnippetForTag("snap.consumer.app"), testutil.Contains, expectedMountLine4)
+	expectedUmountLine4 := `umount "/var/snap/consumer/common/{foo,other,**}{,/}",`
+	c.Assert(spec.SnippetForTag("snap.consumer.app"), testutil.Contains, expectedUmountLine4)
 }
 
 func (s *MountControlInterfaceSuite) TestStaticInfo(c *C) {

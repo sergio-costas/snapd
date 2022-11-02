@@ -51,6 +51,12 @@ func MockSbTPMEnsureProvisioned(f func(tpm *sb_tpm2.Connection, mode sb_tpm2.Pro
 	return restore
 }
 
+func MockSbTPMEnsureProvisionedWithCustomSRK(f func(tpm *sb_tpm2.Connection, mode sb_tpm2.ProvisionMode, newLockoutAuth []byte, srkTemplate *tpm2.Public) error) (restore func()) {
+	restore = testutil.Backup(&sbTPMEnsureProvisionedWithCustomSRK)
+	sbTPMEnsureProvisionedWithCustomSRK = f
+	return restore
+}
+
 func MockTPMReleaseResources(f func(tpm *sb_tpm2.Connection, handle tpm2.Handle) error) (restore func()) {
 	restore = testutil.Backup(&tpmReleaseResources)
 	tpmReleaseResources = f
@@ -218,4 +224,10 @@ func MockSbReadSealedKeyObjectFromFile(f func(string) (*sb_tpm2.SealedKeyObject,
 	return func() {
 		sbReadSealedKeyObjectFromFile = old
 	}
+}
+
+func MockSbTPMDictionaryAttackLockReset(f func(tpm *sb_tpm2.Connection, lockContext tpm2.ResourceContext, lockContextAuthSession tpm2.SessionContext, sessions ...tpm2.SessionContext) error) (restore func()) {
+	restore = testutil.Backup(&sbTPMDictionaryAttackLockReset)
+	sbTPMDictionaryAttackLockReset = f
+	return restore
 }

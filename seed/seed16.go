@@ -165,7 +165,7 @@ func (s *seed16) addSnap(sn *internal.Snap16, essType snap.Type, pinnedTrack str
 			deriveRev := func(snapSHA3_384 string, snapSize uint64) (snap.Revision, error) {
 				if si == nil {
 					var err error
-					si, err = snapasserts.DeriveSideInfoFromDigestAndSize(path, snapSHA3_384, snapSize, s.db)
+					si, err = snapasserts.DeriveSideInfoFromDigestAndSize(path, snapSHA3_384, snapSize, s.model, s.db)
 					if err != nil {
 						return snap.Revision{}, err
 					}
@@ -190,8 +190,7 @@ func (s *seed16) addSnap(sn *internal.Snap16, essType snap.Type, pinnedTrack str
 			}
 			sideInfo = *si
 			sideInfo.Private = sn.Private
-			// TODO: consider whether to use this if we have links?
-			sideInfo.EditedContact = sn.Contact
+			sideInfo.LegacyEditedContact = sn.Contact
 		}
 		origPath := path
 		if newPath != "" {

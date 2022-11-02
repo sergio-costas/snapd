@@ -419,6 +419,28 @@ func (s *SnapOpSuite) TestInstallDevMode(c *check.C) {
 	c.Check(s.srv.n, check.Equals, s.srv.total)
 }
 
+func (s *SnapOpSuite) TestInstallQuotaGroup(c *check.C) {
+	s.srv.checker = func(r *http.Request) {
+		c.Check(r.URL.Path, check.Equals, "/v2/snaps/foo")
+		c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+			"action":      "install",
+			"channel":     "candidate",
+			"quota-group": "test-group",
+			"transaction": string(client.TransactionPerSnap),
+		})
+		s.srv.channel = "candidate"
+	}
+
+	s.RedirectClientToTestServer(s.srv.handle)
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"install", "--channel", "candidate", "--quota-group", "test-group", "foo"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Matches, `(?sm).*foo \(candidate\) 1.0 from Bar installed`)
+	c.Check(s.Stderr(), check.Equals, "")
+	// ensure that the fake server api was actually hit
+	c.Check(s.srv.n, check.Equals, s.srv.total)
+}
+
 func (s *SnapOpSuite) TestInstallClassic(c *check.C) {
 	s.srv.checker = func(r *http.Request) {
 		c.Check(r.URL.Path, check.Equals, "/v2/snaps/foo")
@@ -937,6 +959,38 @@ func (s *SnapOpSuite) TestInstallPathDangerous(c *check.C) {
 	c.Check(s.srv.n, check.Equals, s.srv.total)
 }
 
+func (s *SnapOpSuite) TestInstallPathQuotaGroup(c *check.C) {
+	s.srv.checker = func(r *http.Request) {
+		c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+		form := testForm(r, c)
+		defer form.RemoveAll()
+
+		c.Check(form.Value["action"], check.DeepEquals, []string{"install"})
+		c.Check(form.Value["quota-group"], check.DeepEquals, []string{"foo"})
+		c.Check(form.Value["snap-path"], check.NotNil)
+		c.Check(form.Value["transaction"], check.NotNil)
+		c.Check(form.Value, check.HasLen, 4)
+
+		name, _, body := formFile(form, c)
+		c.Check(name, check.Equals, "snap")
+		c.Check(string(body), check.Equals, "snap-data")
+	}
+
+	snapBody := []byte("snap-data")
+	s.RedirectClientToTestServer(s.srv.handle)
+	snapPath := filepath.Join(c.MkDir(), "foo.snap")
+	err := ioutil.WriteFile(snapPath, snapBody, 0644)
+	c.Assert(err, check.IsNil)
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"install", "--quota-group", "foo", snapPath})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Matches, `(?sm).*foo 1.0 from Bar installed`)
+	c.Check(s.Stderr(), check.Equals, "")
+	// ensure that the fake server api was actually hit
+	c.Check(s.srv.n, check.Equals, s.srv.total)
+}
+
 func (s *SnapOpSuite) TestInstallPathManyTransactional(c *check.C) {
 	snaps := []string{"foo.snap", "bar.snap"}
 	total := 4
@@ -1322,7 +1376,7 @@ next: 2017-04-26T00:58:00+02:00
 	c.Check(n, check.Equals, 1)
 }
 
-func (s *SnapSuite) TestRefreshHold(c *check.C) {
+func (s *SnapSuite) TestRefreshTimeShowsHolds(c *check.C) {
 	n := 0
 	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
 		switch n {
@@ -1347,6 +1401,296 @@ next: 2017-04-26T00:58:00+02:00 (but held)
 	c.Check(s.Stderr(), check.Equals, "")
 	// ensure that the fake server api was actually hit
 	c.Check(n, check.Equals, 1)
+}
+
+func (s *SnapSuite) TestRefreshHoldAllForever(c *check.C) {
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action":     "hold",
+				"time":       "forever",
+				"hold-level": "auto-refresh",
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--hold"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "Auto-refresh of all snaps held until forever\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshHoldManySpecificTime(c *check.C) {
+	t, err := time.Parse(time.RFC3339, "3000-01-01T00:00:00Z")
+	c.Assert(err, check.IsNil)
+	restore := snap.MockTimeNow(func() time.Time {
+		return t
+	})
+	defer restore()
+
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action":     "hold",
+				"time":       "3000-01-01T07:00:00Z",
+				"hold-level": "general",
+				"snaps":      []interface{}{"foo", "bar"},
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--hold=7h", "foo", "bar"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "General refreshes of \"foo\", \"bar\" held until 3000-01-01T07:00:00Z\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshHoldSnapUntilSpecificTime(c *check.C) {
+	t, err := time.Parse(time.RFC3339, "3000-01-01T00:00:00Z")
+	c.Assert(err, check.IsNil)
+	restore := snap.MockTimeNow(func() time.Time {
+		return t
+	})
+	defer restore()
+
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps/foo")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action":     "hold",
+				"hold-level": "general",
+				"time":       "3000-01-01T07:00:00Z",
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--hold=7h", "foo"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "General refreshes of \"foo\" held until 3000-01-01T07:00:00Z\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshHoldSnapForever(c *check.C) {
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps/foo")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action":     "hold",
+				"time":       "forever",
+				"hold-level": "general",
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--hold", "foo"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "General refreshes of \"foo\" held until forever\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshUnholdAllSnaps(c *check.C) {
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action": "unhold",
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--unhold"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "Removed auto-refresh hold on all snaps\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshUnholdOneSnap(c *check.C) {
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps/foo")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action": "unhold",
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--unhold", "foo"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "Removed general refresh hold of \"foo\"\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshUnholdManySnaps(c *check.C) {
+	var n int
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.Method, check.Equals, "POST")
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action": "unhold",
+				"snaps":  []interface{}{"foo", "bar"},
+			})
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type": "async", "change": "42", "status-code": 202}`)
+
+		case 1:
+			c.Check(r.Method, check.Equals, "GET")
+			c.Check(r.URL.Path, check.Equals, "/v2/changes/42")
+			w.WriteHeader(200)
+			fmt.Fprintln(w, `{"type": "sync", "result": {"ready": true, "status": "Done"}}`)
+
+		default:
+			c.Errorf("expected to get 2 requests, now on %d", n+1)
+			fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+		}
+
+		n++
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--unhold", "foo", "bar"})
+	c.Assert(err, check.IsNil)
+	c.Assert(rest, check.DeepEquals, []string{})
+	c.Check(s.Stdout(), check.Equals, "Removed general refresh hold of \"foo\", \"bar\"\n")
+	c.Check(s.Stderr(), check.Equals, "")
+}
+
+func (s *SnapSuite) TestRefreshHoldAndUnholdFailWithOtherFlags(c *check.C) {
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		c.Errorf("unexpected request")
+		fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+	})
+
+	for _, flag := range []string{"--hold", "--unhold"} {
+		rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", flag, "--amend"})
+		c.Assert(err, check.ErrorMatches, fmt.Sprintf("cannot use %s with other flags", flag))
+		c.Assert(rest, check.DeepEquals, []string{"--amend"})
+		c.Check(s.Stdout(), check.Equals, "")
+		c.Check(s.Stderr(), check.Equals, "")
+	}
+}
+
+func (s *SnapSuite) TestRefreshHoldBadDuration(c *check.C) {
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		c.Errorf("unexpected request")
+		fmt.Fprintln(w, `{"type": "error", "result": {"message": "received too many requests"}, "status-code": 500}`)
+	})
+
+	rest, err := snap.Parser(snap.Client()).ParseArgs([]string{"refresh", "--hold=1d"})
+	c.Assert(err, check.ErrorMatches, "hold value must be a number of hours or minutes \\(e\\.g\\., 72h\\): time: unknown unit \"?d\"? in duration \"?1d\"?")
+	c.Assert(rest, check.DeepEquals, []string{"--hold=1d"})
+	c.Check(s.Stdout(), check.Equals, "")
+	c.Check(s.Stderr(), check.Equals, "")
 }
 
 func (s *SnapSuite) TestRefreshNoTimerNoSchedule(c *check.C) {
@@ -2072,9 +2416,7 @@ func (s *SnapOpSuite) TestRemoveRevision(c *check.C) {
 func (s *SnapOpSuite) TestRemoveManyOptions(c *check.C) {
 	s.RedirectClientToTestServer(nil)
 	_, err := snap.Parser(snap.Client()).ParseArgs([]string{"remove", "--revision=17", "one", "two"})
-	c.Assert(err, check.ErrorMatches, `a single snap name is needed to specify options`)
-	_, err = snap.Parser(snap.Client()).ParseArgs([]string{"remove", "--purge", "one", "two"})
-	c.Assert(err, check.ErrorMatches, `a single snap name is needed to specify options`)
+	c.Assert(err, check.ErrorMatches, `cannot use --revision with multiple snap names`)
 }
 
 func (s *SnapOpSuite) TestRemoveMany(c *check.C) {
@@ -2115,6 +2457,35 @@ func (s *SnapOpSuite) TestRemoveMany(c *check.C) {
 	c.Check(s.Stderr(), check.Equals, "")
 	// ensure that the fake server api was actually hit
 	c.Check(n, check.Equals, total)
+}
+
+func (s *SnapOpSuite) TestRemoveManyPurge(c *check.C) {
+	n := 0
+	errMsg := "stopping test after creating change successfully"
+	s.RedirectClientToTestServer(func(w http.ResponseWriter, r *http.Request) {
+		switch n {
+		case 0:
+			c.Check(r.URL.Path, check.Equals, "/v2/snaps")
+			c.Check(DecodedRequestBody(c, r), check.DeepEquals, map[string]interface{}{
+				"action": "remove",
+				"snaps":  []interface{}{"one", "two"},
+				"purge":  true,
+			})
+
+			c.Check(r.Method, check.Equals, "POST")
+			w.WriteHeader(202)
+			fmt.Fprintln(w, `{"type":"async", "change": "42", "status-code": 202}`)
+		default:
+			w.WriteHeader(500)
+			fmt.Fprintf(w, `{"type":"error", "result": {"message":%q, "kind":""}, "status-code": 400}`, errMsg)
+		}
+
+		n++
+	})
+
+	_, err := snap.Parser(snap.Client()).ParseArgs([]string{"remove", "--purge", "one", "two"})
+	// purge option was processed, the failure comes after
+	c.Assert(err, check.ErrorMatches, errMsg)
 }
 
 func (s *SnapOpSuite) TestInstallManyChannel(c *check.C) {
@@ -2288,6 +2659,7 @@ func (s *SnapOpSuite) TestWaitServerError(c *check.C) {
 		{"disable", "foo"},
 		{"try", "."},
 		{"switch", "--channel=foo", "bar"},
+		{"debug", "migrate-home", "foo"},
 		// commands that use waitMixin from elsewhere
 		{"start", "foo"},
 		{"stop", "foo"},

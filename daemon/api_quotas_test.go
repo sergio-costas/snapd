@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"gopkg.in/check.v1"
 
@@ -79,6 +80,48 @@ func mockQuotas(st *state.State, c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = servicestatetest.MockQuotaInState(st, "baz", "foo", nil, quota.NewResourcesBuilder().WithMemoryLimit(quantity.SizeMiB).Build())
 	c.Assert(err, check.IsNil)
+}
+
+func (s *apiQuotaSuite) TestCreateQuotaValues(c *check.C) {
+	st := s.d.Overlord().State()
+	st.Lock()
+	err := servicestatetest.MockQuotaInState(st, "ginger-ale", "", nil,
+		quota.NewResourcesBuilder().
+			WithMemoryLimit(quantity.SizeMiB).
+			WithCPUCount(1).
+			WithCPUPercentage(100).
+			WithThreadLimit(256).
+			WithCPUSet([]int{0, 1}).
+			WithJournalRate(150, time.Second).
+			WithJournalSize(quantity.SizeMiB).
+			Build())
+	allGroups, err2 := servicestate.AllQuotas(st)
+	st.Unlock()
+	c.Assert(err, check.IsNil)
+	c.Assert(err2, check.IsNil)
+
+	c.Check(allGroups, check.HasLen, 1)
+
+	grp := allGroups["ginger-ale"]
+	c.Check(grp, check.NotNil)
+
+	quotaValues := daemon.CreateQuotaValues(grp)
+	c.Check(quotaValues.Memory, check.DeepEquals, quantity.SizeMiB)
+	c.Check(quotaValues.Threads, check.DeepEquals, 256)
+	c.Check(quotaValues.CPU, check.DeepEquals, &client.QuotaCPUValues{
+		Count:      1,
+		Percentage: 100,
+	})
+	c.Check(quotaValues.CPUSet, check.DeepEquals, &client.QuotaCPUSetValues{
+		CPUs: []int{0, 1},
+	})
+	c.Check(quotaValues.Journal, check.DeepEquals, &client.QuotaJournalValues{
+		Size: quantity.SizeMiB,
+		QuotaJournalRate: &client.QuotaJournalRate{
+			RateCount:  150,
+			RatePeriod: time.Second,
+		},
+	})
 }
 
 func (s *apiQuotaSuite) TestPostQuotaUnknownAction(c *check.C) {
@@ -218,6 +261,43 @@ func (s *apiQuotaSuite) TestPostEnsureQuotaCreateQuotaConflicts(c *check.C) {
 	c.Assert(createCalled, check.Equals, 2)
 }
 
+func (s *apiQuotaSuite) TestPostEnsureQuotaCreateJournalRateZeroHappy(c *check.C) {
+	var createCalled int
+	r := daemon.MockServicestateCreateQuota(func(st *state.State, name string, parentName string, snaps []string, resourceLimits quota.Resources) (*state.TaskSet, error) {
+		createCalled++
+		c.Check(name, check.Equals, "booze")
+		c.Check(parentName, check.Equals, "foo")
+		c.Check(snaps, check.DeepEquals, []string{"some-snap"})
+		c.Check(resourceLimits, check.DeepEquals, quota.NewResourcesBuilder().WithJournalRate(0, 0).Build())
+		ts := state.NewTaskSet(st.NewTask("foo-quota", "..."))
+		return ts, nil
+	})
+	defer r()
+
+	data, err := json.Marshal(daemon.PostQuotaGroupData{
+		Action:    "ensure",
+		GroupName: "booze",
+		Parent:    "foo",
+		Snaps:     []string{"some-snap"},
+		Constraints: client.QuotaValues{
+			Journal: &client.QuotaJournalValues{
+				QuotaJournalRate: &client.QuotaJournalRate{
+					RateCount:  0,
+					RatePeriod: 0,
+				},
+			},
+		},
+	})
+	c.Assert(err, check.IsNil)
+
+	req, err := http.NewRequest("POST", "/v2/quotas", bytes.NewBuffer(data))
+	c.Assert(err, check.IsNil)
+	rsp := s.asyncReq(c, req, nil)
+	c.Assert(rsp.Status, check.Equals, 202)
+	c.Assert(createCalled, check.Equals, 1)
+	c.Assert(s.ensureSoonCalled, check.Equals, 1)
+}
+
 func (s *apiQuotaSuite) TestPostEnsureQuotaUpdateCpuHappy(c *check.C) {
 	st := s.d.Overlord().State()
 	st.Lock()
@@ -297,7 +377,7 @@ func (s *apiQuotaSuite) TestPostEnsureQuotaUpdateCpu2Happy(c *check.C) {
 		c.Assert(name, check.Equals, "ginger-ale")
 		c.Assert(opts, check.DeepEquals, servicestate.QuotaGroupUpdate{
 			AddSnaps:          []string{"some-snap"},
-			NewResourceLimits: quota.NewResourcesBuilder().WithCPUCount(1).WithCPUPercentage(100).WithAllowedCPUs([]int{0, 1}).Build(),
+			NewResourceLimits: quota.NewResourcesBuilder().WithCPUCount(1).WithCPUPercentage(100).WithCPUSet([]int{0, 1}).Build(),
 		})
 		ts := state.NewTaskSet(st.NewTask("foo-quota", "..."))
 		return ts, nil
@@ -631,6 +711,68 @@ func (s *apiQuotaSuite) TestListQuotas(c *check.C) {
 			Subgroups:   []string{"bar", "baz"},
 			Constraints: &client.QuotaValues{Memory: 16 * quantity.SizeMiB},
 			Current:     &client.QuotaValues{Memory: quantity.Size(5000)},
+		},
+	})
+	c.Check(s.ensureSoonCalled, check.Equals, 0)
+}
+
+func (s *apiQuotaSuite) TestListJournalQuotas(c *check.C) {
+	st := s.d.Overlord().State()
+	st.Lock()
+	err := servicestatetest.MockQuotaInState(st, "foo", "", nil, quota.NewResourcesBuilder().WithJournalSize(64*quantity.SizeMiB).Build())
+	c.Assert(err, check.IsNil)
+	err = servicestatetest.MockQuotaInState(st, "bar", "foo", nil, quota.NewResourcesBuilder().WithJournalRate(100, time.Hour).Build())
+	c.Assert(err, check.IsNil)
+	err = servicestatetest.MockQuotaInState(st, "baz", "foo", nil, quota.NewResourcesBuilder().WithJournalRate(0, 0).Build())
+	c.Assert(err, check.IsNil)
+	st.Unlock()
+
+	calls := 0
+	r := daemon.MockGetQuotaUsage(func(grp *quota.Group) (*client.QuotaValues, error) {
+		calls++
+		return &client.QuotaValues{}, nil
+	})
+	defer r()
+	defer func() {
+		c.Assert(calls, check.Equals, 3)
+	}()
+
+	req, err := http.NewRequest("GET", "/v2/quotas", nil)
+	c.Assert(err, check.IsNil)
+	rsp := s.syncReq(c, req, nil)
+	c.Assert(rsp.Status, check.Equals, 200)
+	c.Assert(rsp.Result, check.FitsTypeOf, []client.QuotaGroupResult{})
+	res := rsp.Result.([]client.QuotaGroupResult)
+	c.Check(res, check.DeepEquals, []client.QuotaGroupResult{
+		{
+			GroupName: "bar",
+			Parent:    "foo",
+			Constraints: &client.QuotaValues{Journal: &client.QuotaJournalValues{
+				QuotaJournalRate: &client.QuotaJournalRate{
+					RateCount:  100,
+					RatePeriod: time.Hour,
+				},
+			}},
+			Current: &client.QuotaValues{},
+		},
+		{
+			GroupName: "baz",
+			Parent:    "foo",
+			Constraints: &client.QuotaValues{Journal: &client.QuotaJournalValues{
+				QuotaJournalRate: &client.QuotaJournalRate{
+					RateCount:  0,
+					RatePeriod: 0,
+				},
+			}},
+			Current: &client.QuotaValues{},
+		},
+		{
+			GroupName: "foo",
+			Subgroups: []string{"bar", "baz"},
+			Constraints: &client.QuotaValues{Journal: &client.QuotaJournalValues{
+				Size: 64 * quantity.SizeMiB,
+			}},
+			Current: &client.QuotaValues{},
 		},
 	})
 	c.Check(s.ensureSoonCalled, check.Equals, 0)
