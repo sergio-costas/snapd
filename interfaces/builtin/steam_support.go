@@ -217,7 +217,7 @@ func init() {
 	registerIface(&commonInterface{
 		name:                  "steam-support",
 		summary:               steamSupportSummary,
-		implicitOnCore:        false,
+		implicitOnCore:        true,
 		implicitOnClassic:     true,
 		baseDeclarationSlots:  steamSupportBaseDeclarationSlots,
 		baseDeclarationPlugs:  steamSupportBaseDeclarationPlugs,
