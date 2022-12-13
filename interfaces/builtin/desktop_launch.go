@@ -49,6 +49,9 @@ const desktopLaunchConnectedPlugAppArmor = `
 /usr/bin/snap ixr,
 /snap/snapd/*/usr/bin/snap ixr,
 
+# Allow access to all read-only information provided by snaps
+/snap/*/*/** r,
+
 #include <abstractions/dbus-session-strict>
 
 dbus (send)
