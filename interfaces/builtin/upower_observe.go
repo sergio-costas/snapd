@@ -167,7 +167,7 @@ dbus (send)
     path=/org/freedesktop/UPower
     interface=org.freedesktop.UPower
     member=EnumerateDevices
-    peer=(label=###SLOT_SECURITY_TAGS###),
+    peer=(label=unconfined),
 
 # Read all properties from UPower and devices
 # do not use peer=(label=unconfined) here since this is DBus activated
@@ -204,7 +204,7 @@ dbus (receive)
     path=/org/freedesktop/UPower{,/devices/**}
     interface=org.freedesktop.DBus.Properties
     member=PropertiesChanged
-    peer=(label=###SLOT_SECURITY_TAGS###),
+    peer=(label=unconfined),
 
 # Allow clients to introspect the service
 # do not use peer=(label=unconfined) here since this is DBus activated
