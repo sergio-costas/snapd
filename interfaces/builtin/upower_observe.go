@@ -27,7 +27,6 @@ import (
 	"github.com/snapcore/snapd/interfaces/dbus"
 	"github.com/snapcore/snapd/interfaces/seccomp"
 	"github.com/snapcore/snapd/osutil"
-	"github.com/snapcore/snapd/release"
 	"github.com/snapcore/snapd/snap"
 )
 
@@ -167,7 +166,7 @@ dbus (send)
     path=/org/freedesktop/UPower
     interface=org.freedesktop.UPower
     member=EnumerateDevices
-    peer=(label=unconfined),
+    peer=(label=###SLOT_SECURITY_TAGS###),
 
 # Read all properties from UPower and devices
 # do not use peer=(label=unconfined) here since this is DBus activated
@@ -204,7 +203,7 @@ dbus (receive)
     path=/org/freedesktop/UPower{,/devices/**}
     interface=org.freedesktop.DBus.Properties
     member=PropertiesChanged
-    peer=(label=unconfined),
+    peer=(label=###SLOT_SECURITY_TAGS###),
 
 # Allow clients to introspect the service
 # do not use peer=(label=unconfined) here since this is DBus activated
@@ -233,7 +232,7 @@ func (iface *upowerObserveInterface) StaticInfo() interfaces.StaticInfo {
 func (iface *upowerObserveInterface) AppArmorConnectedPlug(spec *apparmor.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
 	old := "###SLOT_SECURITY_TAGS###"
 	new := slotAppLabelExpr(slot)
-	if release.OnClassic {
+	if implicitSystemConnectedSlot(slot) {
 		// Let confined apps access unconfined upower on classic
 		new = "unconfined"
 	}
