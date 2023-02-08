@@ -48,6 +48,7 @@ const pipewireServerBaseDeclarationSlots = `
         - core
     deny-connection:
       on-classic: false
+    deny-auto-connection: true
 `
 
 const pipewireServerConnectedPlugAppArmor = `
