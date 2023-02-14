@@ -1,7 +1,7 @@
 // -*- Mode: Go; indent-tabs-mode: t -*-
 
 /*
- * Copyright (C) 2018 Canonical Ltd
+ * Copyright (C) 2023 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 3 as
@@ -24,7 +24,6 @@ import (
 	"github.com/snapcore/snapd/interfaces/apparmor"
 	"github.com/snapcore/snapd/interfaces/seccomp"
 	"github.com/snapcore/snapd/interfaces/udev"
-	"github.com/snapcore/snapd/release"
 	"github.com/snapcore/snapd/snap"
 )
 
@@ -38,7 +37,7 @@ import (
 // policy for record and playback (eg, a different socket path), then those
 // accesses will be added to this interface.
 
-const pipewireServerSummary = `allows audio playback via supporting services`
+const pipewireServerSummary = `allows full access to the pipewire socket (don't needed for normal apps)`
 
 const pipewireServerBaseDeclarationSlots = `
   pipewire-server:
@@ -56,13 +55,7 @@ const pipewireServerConnectedPlugAppArmor = `
 
 owner /{,var/}run/user/[0-9]*/ r,
 owner /{,var/}run/user/[0-9]*/pipewire-0 rwk,
-owner /{,var/}run/user/[0-9]*/pipewire-0.lock r,
-`
-
-const pipewireServerConnectedPlugAppArmorDesktop = `
-owner /{,var/}run/user/[0-9]*/ r,
-owner /{,var/}run/user/[0-9]*/pipewire-0 rwk,
-owner /{,var/}run/user/[0-9]*/pipewire-0.lock r,
+owner /{,var/}run/user/[0-9]*/pipewire-0.lock rwk,
 `
 
 const pipewireServerConnectedPlugSecComp = `
@@ -70,7 +63,7 @@ shmctl
 `
 
 const pipewireServerPermanentSlotAppArmor = `
-# When running PulseAudio in system mode it will switch to the at
+# When running Pipewire in system mode it will switch to the at
 # build time configured user/group on startup.
 capability setuid,
 capability setgid,
@@ -124,9 +117,6 @@ func (iface *pipewireServerInterface) StaticInfo() interfaces.StaticInfo {
 
 func (iface *pipewireServerInterface) AppArmorConnectedPlug(spec *apparmor.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
 	spec.AddSnippet(pipewireServerConnectedPlugAppArmor)
-	if release.OnClassic {
-		spec.AddSnippet(pipewireServerConnectedPlugAppArmorDesktop)
-	}
 	return nil
 }
 

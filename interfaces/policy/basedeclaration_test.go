@@ -808,6 +808,7 @@ var (
 		"network-status":            {"core"},
 		"ofono":                     {"app", "core"},
 		"online-accounts-service":   {"app"},
+		"pipewire-server":           {"app", "core"},
 		"power-control":             {"core"},
 		"ppp":                       {"core"},
 		"polkit-agent":              {"core"},
