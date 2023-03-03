@@ -64,6 +64,7 @@ import (
 	"github.com/snapcore/snapd/snap"
 	"github.com/snapcore/snapd/snap/snaptest"
 	"github.com/snapcore/snapd/sysconfig"
+	"github.com/snapcore/snapd/systemd"
 	"github.com/snapcore/snapd/testutil"
 	"github.com/snapcore/snapd/timings"
 )
@@ -73,6 +74,8 @@ type deviceMgrInstallModeSuite struct {
 
 	ConfigureTargetSystemOptsPassed []*sysconfig.Options
 	ConfigureTargetSystemErr        error
+
+	SystemctlDaemonReloadCalls int
 }
 
 var _ = Suite(&deviceMgrInstallModeSuite{})
@@ -105,7 +108,8 @@ func (s *deviceMgrInstallModeSuite) SetUpTest(c *C) {
 	})
 	s.AddCleanup(restore)
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(tpmMode secboot.TPMProvisionMode) error {
+		c.Check(tpmMode, Equals, secboot.TPMProvisionFull)
 		return fmt.Errorf("TPM not available")
 	})
 	s.AddCleanup(restore)
@@ -113,6 +117,15 @@ func (s *deviceMgrInstallModeSuite) SetUpTest(c *C) {
 	s.state.Lock()
 	defer s.state.Unlock()
 	s.state.Set("seeded", true)
+
+	s.SystemctlDaemonReloadCalls = 0
+	restore = systemd.MockSystemctl(func(args ...string) ([]byte, error) {
+		if args[0] == "daemon-reload" {
+			s.SystemctlDaemonReloadCalls++
+		}
+		return nil, nil
+	})
+	s.AddCleanup(restore)
 
 	fakeJournalctl := testutil.MockCommand(c, "journalctl", "")
 	s.AddCleanup(fakeJournalctl.Restore)
@@ -254,7 +267,8 @@ func (s *deviceMgrInstallModeSuite) doRunChangeTestWithEncryption(c *C, grade st
 	})
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(tpmMode secboot.TPMProvisionMode) error {
+		c.Check(tpmMode, Equals, secboot.TPMProvisionFull)
 		if tc.tpm {
 			return nil
 		} else {
@@ -1148,6 +1162,9 @@ func (s *deviceMgrInstallModeSuite) TestInstallWithInstallDeviceHookExpTasks(c *
 
 	c.Assert(hooksCalled, HasLen, 1)
 	c.Assert(hooksCalled[0].HookName(), Equals, "install-device")
+
+	// ensure systemctl daemon-reload gets called
+	c.Assert(s.SystemctlDaemonReloadCalls, Equals, 1)
 }
 
 func (s *deviceMgrInstallModeSuite) testInstallWithInstallDeviceHookSnapctlReboot(c *C, arg string, rst restart.RestartType) {
@@ -1188,6 +1205,9 @@ func (s *deviceMgrInstallModeSuite) testInstallWithInstallDeviceHookSnapctlReboo
 
 	// we did end up requesting the right shutdown
 	c.Check(s.restartRequests, DeepEquals, []restart.RestartType{rst})
+
+	// ensure systemctl daemon-reload gets called
+	c.Assert(s.SystemctlDaemonReloadCalls, Equals, 1)
 }
 
 func (s *deviceMgrInstallModeSuite) TestInstallWithInstallDeviceHookSnapctlRebootHalt(c *C) {
@@ -1463,7 +1483,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallBootloaderVarSetFails(c *C) {
 	})
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return fmt.Errorf("no encrypted soup for you") })
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return fmt.Errorf("no encrypted soup for you") })
 	defer restore()
 
 	err := ioutil.WriteFile(filepath.Join(dirs.GlobalRootDir, "/var/lib/snapd/modeenv"),
@@ -1492,7 +1512,7 @@ func (s *deviceMgrInstallModeSuite) testInstallEncryptionValidityChecks(c *C, er
 	restore := release.MockOnClassic(false)
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return nil })
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return nil })
 	defer restore()
 
 	err := ioutil.WriteFile(filepath.Join(dirs.GlobalRootDir, "/var/lib/snapd/modeenv"),
@@ -1827,7 +1847,10 @@ func (s *deviceMgrInstallModeSuite) TestInstallWithEncryptionValidatesGadgetErr(
 	defer restore()
 
 	// pretend we have a TPM
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return nil })
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(tpmMode secboot.TPMProvisionMode) error {
+		c.Check(tpmMode, Equals, secboot.TPMProvisionFull)
+		return nil
+	})
 	defer restore()
 
 	// must be a model that requires encryption to error
@@ -1856,7 +1879,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallWithEncryptionValidatesGadgetWarn
 	defer restore()
 
 	// pretend we have a TPM
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return nil })
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return nil })
 	defer restore()
 
 	s.testInstallGadgetNoSave(c, "dangerous")
@@ -1880,7 +1903,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallWithoutEncryptionValidatesGadgetW
 	defer restore()
 
 	// pretend we have a TPM
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return fmt.Errorf("TPM2 not available") })
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return fmt.Errorf("TPM2 not available") })
 	defer restore()
 
 	s.testInstallGadgetNoSave(c, "dangerous")
@@ -1958,7 +1981,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncrypted(c *C) {
 		} else {
 			makeInstalledMockKernelSnap(c, st, kernelYamlNoFdeSetup)
 		}
-		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error {
 			if tc.hasTPM {
 				return nil
 			}
@@ -1966,7 +1989,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncrypted(c *C) {
 		})
 		defer restore()
 
-		encryptionType, err := devicestate.DeviceManagerCheckEncryption(s.mgr, st, deviceCtx)
+		encryptionType, err := devicestate.DeviceManagerCheckEncryption(s.mgr, st, deviceCtx, secboot.TPMProvisionFull)
 		c.Assert(err, IsNil)
 		c.Check(encryptionType, Equals, tc.encryptionType, Commentf("%v", tc))
 		if !tc.hasTPM {
@@ -1981,7 +2004,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedStorageSafety(c *C)
 
 	s.makeMockInstalledPcKernelAndGadget(c, "", "")
 
-	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return nil })
+	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return nil })
 	defer restore()
 
 	var testCases = []struct {
@@ -2024,7 +2047,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedStorageSafety(c *C)
 		})
 		deviceCtx := &snapstatetest.TrivialDeviceContext{DeviceModel: mockModel}
 
-		encryptionType, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx)
+		encryptionType, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx, secboot.TPMProvisionFull)
 		c.Assert(err, IsNil)
 		encrypt := (encryptionType != secboot.EncryptionTypeNone)
 		c.Check(encrypt, Equals, tc.expectedEncryption, Commentf("%v", tc))
@@ -2037,7 +2060,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedErrors(c *C) {
 
 	s.makeMockInstalledPcKernelAndGadget(c, "", "")
 
-	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return fmt.Errorf("tpm says no") })
+	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return fmt.Errorf("tpm says no") })
 	defer restore()
 
 	var testCases = []struct {
@@ -2083,7 +2106,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedErrors(c *C) {
 				}},
 		})
 		deviceCtx := &snapstatetest.TrivialDeviceContext{DeviceModel: mockModel}
-		_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx)
+		_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx, secboot.TPMProvisionFull)
 		c.Check(err, ErrorMatches, tc.expectedErr, Commentf("%s %s", tc.grade, tc.storageSafety))
 	}
 }
@@ -2174,7 +2197,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedErrorsLogsTPM(c *C)
 
 	s.makeMockInstalledPcKernelAndGadget(c, "", "")
 
-	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error {
 		return fmt.Errorf("tpm says no")
 	})
 	defer restore()
@@ -2184,7 +2207,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedErrorsLogsTPM(c *C)
 
 	mockModel := s.makeModelAssertionInState(c, "my-brand", "my-model", checkEncryptionModelHeaders)
 	deviceCtx := &snapstatetest.TrivialDeviceContext{DeviceModel: mockModel}
-	_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx)
+	_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx, secboot.TPMProvisionFull)
 	c.Check(err, IsNil)
 	c.Check(logbuf.String(), Matches, "(?s).*: not encrypting device storage as checking TPM gave: tpm says no\n")
 }
@@ -2203,7 +2226,7 @@ func (s *deviceMgrInstallModeSuite) TestInstallCheckEncryptedErrorsLogsHook(c *C
 	makeInstalledMockKernelSnap(c, s.state, kernelYamlWithFdeSetup)
 
 	deviceCtx := &snapstatetest.TrivialDeviceContext{DeviceModel: mockModel}
-	_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx)
+	_, err := devicestate.DeviceManagerCheckEncryption(s.mgr, s.state, deviceCtx, secboot.TPMProvisionFull)
 	c.Check(err, IsNil)
 	c.Check(logbuf.String(), Matches, "(?s).*: not encrypting device storage as querying kernel fde-setup hook did not succeed:.*\n")
 }
@@ -2387,7 +2410,7 @@ func (s *deviceMgrInstallModeSuite) doRunFactoryResetChange(c *C, model *asserts
 	})
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error {
 		if tc.tpm {
 			return nil
 		} else {
@@ -2996,7 +3019,8 @@ func (s *deviceMgrInstallModeSuite) TestFactoryResetExpectedTasks(c *C) {
 	restore := release.MockOnClassic(false)
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(tpmMode secboot.TPMProvisionMode) error {
+		c.Check(tpmMode, Equals, secboot.TPMPartialReprovision)
 		return fmt.Errorf("TPM not available")
 	})
 	defer restore()
@@ -3056,7 +3080,8 @@ func (s *deviceMgrInstallModeSuite) TestFactoryResetInstallDeviceHook(c *C) {
 	restore := release.MockOnClassic(false)
 	defer restore()
 
-	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func() error {
+	restore = devicestate.MockSecbootCheckTPMKeySealingSupported(func(tpmMode secboot.TPMProvisionMode) error {
+		c.Check(tpmMode, Equals, secboot.TPMPartialReprovision)
 		return fmt.Errorf("TPM not available")
 	})
 	defer restore()
@@ -3135,6 +3160,9 @@ func (s *deviceMgrInstallModeSuite) TestFactoryResetInstallDeviceHook(c *C) {
 
 	c.Assert(hooksCalled, HasLen, 1)
 	c.Assert(hooksCalled[0].HookName(), Equals, "install-device")
+
+	// ensure systemctl daemon-reload gets called
+	c.Assert(s.SystemctlDaemonReloadCalls, Equals, 1)
 }
 
 func (s *deviceMgrInstallModeSuite) TestFactoryResetRunSysconfig(c *C) {
@@ -3308,7 +3336,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoForceUnencrypted(c 
 	}
 
 	for _, tc := range testCases {
-		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return tc.tpmErr })
+		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return tc.tpmErr })
 		defer restore()
 
 		mockModel := s.makeModelAssertionInState(c, "my-brand", "my-model", map[string]interface{}{
@@ -3341,7 +3369,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoForceUnencrypted(c 
 			c.Assert(err, IsNil)
 		}
 
-		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, kernelInfo, gadgetInfo)
+		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, secboot.TPMProvisionFull, kernelInfo, gadgetInfo)
 		c.Assert(err, IsNil)
 		c.Check(res, DeepEquals, tc.expected, Commentf("%v", tc))
 	}
@@ -3380,7 +3408,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoGadgetIncompatibleW
 	s.state.Lock()
 	defer s.state.Unlock()
 
-	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return nil })
+	restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return nil })
 	defer restore()
 
 	kernelInfo := makeInstalledMockKernelSnap(c, s.state, kernelYamlNoFdeSetup)
@@ -3474,7 +3502,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoGadgetIncompatibleW
 					"default-channel": "20",
 				}},
 		})
-		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, kernelInfo, tc.gadgetInfo)
+		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, secboot.TPMProvisionFull, kernelInfo, tc.gadgetInfo)
 		c.Assert(err, IsNil)
 		c.Check(res, DeepEquals, tc.expected, Commentf("%v", tc))
 	}
@@ -3606,7 +3634,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoWithTPM(c *C) {
 		},
 	}
 	for _, tc := range testCases {
-		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func() error { return tc.tpmErr })
+		restore := devicestate.MockSecbootCheckTPMKeySealingSupported(func(secboot.TPMProvisionMode) error { return tc.tpmErr })
 		defer restore()
 
 		mockModel := s.makeModelAssertionInState(c, "my-brand", "my-model", map[string]interface{}{
@@ -3629,7 +3657,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoWithTPM(c *C) {
 					"default-channel": "20",
 				}},
 		})
-		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, kernelInfo, gadgetInfo)
+		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, secboot.TPMProvisionFull, kernelInfo, gadgetInfo)
 		c.Assert(err, IsNil)
 		c.Check(res, DeepEquals, tc.expected, Commentf("%v", tc))
 	}
@@ -3754,7 +3782,7 @@ func (s *deviceMgrInstallModeSuite) TestEncryptionSupportInfoWithFdeHook(c *C) {
 					"default-channel": "20",
 				}},
 		})
-		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, kernelInfo, gadgetInfo)
+		res, err := devicestate.DeviceManagerEncryptionSupportInfo(s.mgr, mockModel, secboot.TPMProvisionFull, kernelInfo, gadgetInfo)
 		c.Assert(err, IsNil)
 		c.Check(res, DeepEquals, tc.expected, Commentf("%v", tc))
 	}
