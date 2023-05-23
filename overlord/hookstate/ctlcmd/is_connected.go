@@ -71,7 +71,8 @@ codes may be returned: 10 if the other snap is not connected but uses
 classic confinement, or 11 if the other process is not snap confined.
 
 The --pid and --apparmor-label options may only be used with slots of
-interface type "pulseaudio", "audio-record", or "cups-control".
+interface type "pulseaudio", "audio-playback", "audio-record", or
+"cups-control".
 `)
 
 func init() {
@@ -84,7 +85,7 @@ func isConnectedPidCheckAllowed(info *snap.Info, plugOrSlot string) bool {
 	slot := info.Slots[plugOrSlot]
 	if slot != nil {
 		switch slot.Interface {
-		case "pulseaudio", "audio-record", "cups-control":
+		case "pulseaudio", "audio-record", "audio-playback", "cups-control":
 			return true
 		}
 	}
