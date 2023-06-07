@@ -113,6 +113,11 @@ owner /run/user/[0-9]*/wayland-[0-9]* rw,
 /etc/drirc r,
 `
 
+const waylandConnectedPlugAppArmorCore = `
+# Allow access to the Wayland compositor server socket of the slot snap
+owner /run/user/[0-9]*/###SLOT_SECURITY_TAGS###/wayland-[0-9]* rw,
+`
+
 type waylandInterface struct{}
 
 func (iface *waylandInterface) Name() string {
@@ -129,6 +134,12 @@ func (iface *waylandInterface) StaticInfo() interfaces.StaticInfo {
 
 func (iface *waylandInterface) AppArmorConnectedPlug(spec *apparmor.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
 	spec.AddSnippet(waylandConnectedPlugAppArmor)
+	if !implicitSystemConnectedSlot(slot) {
+		old := "###SLOT_SECURITY_TAGS###"
+		new := "snap." + slot.Snap().InstanceName() // forms the snap-instance-specific subdirectory name of /run/user/*/ used for XDG_RUNTIME_DIR
+		snippet := strings.Replace(waylandConnectedPlugAppArmorCore, old, new, -1)
+		spec.AddSnippet(snippet)
+	}
 	return nil
 }
 
