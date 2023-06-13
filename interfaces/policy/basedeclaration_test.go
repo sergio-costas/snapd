@@ -1079,7 +1079,6 @@ func (s *baseDeclSuite) TestConnectionOnClassic(c *C) {
 		"network-manager": true,
 		"ofono":           true,
 		"pulseaudio":      true,
-		"upower-observe":  true,
 	}
 
 	for _, onClassic := range []bool{true, false} {
