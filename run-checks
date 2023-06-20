@@ -209,6 +209,7 @@ if [ "$STATIC" = 1 ]; then
 
     if command -v shellcheck >/dev/null; then
         exclude_tools_path=tests/lib/external/snapd-testing-tools
+        exclude_xdg_tools=scripts/xdg-
         echo "Checking shell scripts..."
         if [ -n "$CHANGED_FILES" ]; then
             echo "Checking just the changed bash files"
@@ -224,7 +225,9 @@ if [ "$STATIC" = 1 ]; then
         FILTERED_FILES=
         for file in $INITIAL_FILES; do
             if ! echo "$file" | grep -q "$exclude_tools_path"; then
-                FILTERED_FILES="$FILTERED_FILES $file"
+                if ! echo "$file" | grep -q "$exclude_xdg_tools"; then
+                    FILTERED_FILES="$FILTERED_FILES $file"
+                fi
             fi
         done
         if [ -n "$FILTERED_FILES" ]; then
