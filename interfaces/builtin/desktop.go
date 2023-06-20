@@ -53,6 +53,17 @@ const desktopConnectedPlugAppArmor = `
 #include <abstractions/dbus-strict>
 #include <abstractions/dbus-session-strict>
 
+# Allow use of snapd's internal 'xdg-settings'
+# TODO: allow it only in CORE DESKTOP
+/usr/bin/xdg-settings ixr,
+dbus (send)
+    bus=session
+    path=/io/snapcraft/Settings
+    interface=io.snapcraft.Settings
+    member={Check,CheckSub,Get,GetSub,Set,SetSub}
+    peer=(label=unconfined),
+# end
+
 # Allow finding the DBus session bus id (eg, via dbus_bus_get_id())
 dbus (send)
      bus=session
@@ -342,6 +353,23 @@ dbus (send)
     peer=(label=unconfined),
 /etc/xdg/user-dirs.conf r,
 /etc/xdg/user-dirs.defaults r,
+
+# TODO: allow it only in CORE DESKTOP
+# Allow use of snapd's internal 'xdg-settings'
+/usr/bin/xdg-settings ixr,
+dbus (send)
+    bus=session
+    path=/io/snapcraft/Settings
+    interface=io.snapcraft.Settings
+    member={Check,CheckSub,Get,GetSub,Set,SetSub}
+    peer=(label=unconfined),
+dbus (send)
+    bus=session
+    path=/io/snapcraft/Launcher
+    interface=io.snapcraft.Launcher
+    member={OpenURL,OpenFile}
+    peer=(label=unconfined),
+# end TODO
 `
 
 type desktopInterface struct {
