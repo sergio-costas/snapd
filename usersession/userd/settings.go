@@ -234,9 +234,11 @@ func checkOutput(cmd *exec.Cmd, command string, setspec *settingSpec) (string, *
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.Check string:'default-web-browser' string:'firefox.desktop'
 func (s *Settings) Check(setting string, check string, sender dbus.Sender) (string, *dbus.Error) {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return "", err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingMain := &settingSpec{setting: setting}
@@ -245,7 +247,7 @@ func (s *Settings) Check(setting string, check string, sender dbus.Sender) (stri
 		return "", err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "check", setting, desktopFile)
+	cmd := exec.Command(command, "check", setting, desktopFile)
 	output, err := checkOutput(cmd, "check", settingMain)
 	if err != nil {
 		return "", err
@@ -259,9 +261,11 @@ func (s *Settings) Check(setting string, check string, sender dbus.Sender) (stri
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.CheckSub string:'default-url-scheme-handler' string:'irc' string:'ircclient.desktop'
 func (s *Settings) CheckSub(setting string, subproperty string, check string, sender dbus.Sender) (string, *dbus.Error) {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return "", err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
@@ -270,7 +274,7 @@ func (s *Settings) CheckSub(setting string, subproperty string, check string, se
 		return "", err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "check", setting, subproperty, desktopFile)
+	cmd := exec.Command(command, "check", setting, subproperty, desktopFile)
 	output, err := checkOutput(cmd, "check", settingSub)
 	if err != nil {
 		return "", err
@@ -284,9 +288,11 @@ func (s *Settings) CheckSub(setting string, subproperty string, check string, se
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.Get string:'default-web-browser'
 func (s *Settings) Get(setting string, sender dbus.Sender) (string, *dbus.Error) {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return "", err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingMain := &settingSpec{setting: setting}
@@ -294,7 +300,7 @@ func (s *Settings) Get(setting string, sender dbus.Sender) (string, *dbus.Error)
 		return "", err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "get", setting)
+	cmd := exec.Command(command, "get", setting)
 	output, err := checkOutput(cmd, "get", settingMain)
 	if err != nil {
 		return "", err
@@ -308,9 +314,11 @@ func (s *Settings) Get(setting string, sender dbus.Sender) (string, *dbus.Error)
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.GetSub string:'default-url-scheme-handler' string:'irc'
 func (s *Settings) GetSub(setting string, subproperty string, sender dbus.Sender) (string, *dbus.Error) {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return "", err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
@@ -318,7 +326,7 @@ func (s *Settings) GetSub(setting string, subproperty string, sender dbus.Sender
 		return "", err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "get", setting, subproperty)
+	cmd := exec.Command(command, "get", setting, subproperty)
 	output, err := checkOutput(cmd, "get", settingSub)
 	if err != nil {
 		return "", err
@@ -332,9 +340,11 @@ func (s *Settings) GetSub(setting string, subproperty string, sender dbus.Sender
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.Set string:'default-web-browser' string:'chromium-browser.desktop'
 func (s *Settings) Set(setting string, new string, sender dbus.Sender) *dbus.Error {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingMain := &settingSpec{setting: setting}
@@ -347,7 +357,7 @@ func (s *Settings) Set(setting string, new string, sender dbus.Sender) *dbus.Err
 		return err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "set", setting, desktopFile)
+	cmd := exec.Command(command, "set", setting, desktopFile)
 	if _, err := checkOutput(cmd, "set", settingMain); err != nil {
 		return err
 	}
@@ -360,9 +370,11 @@ func (s *Settings) Set(setting string, new string, sender dbus.Sender) *dbus.Err
 //
 // Example usage: dbus-send --session --dest=io.snapcraft.Settings --type=method_call --print-reply /io/snapcraft/Settings io.snapcraft.Settings.SetSub string:'default-url-scheme-handler' string:'irc' string:'ircclient.desktop'
 func (s *Settings) SetSub(setting string, subproperty string, new string, sender dbus.Sender) *dbus.Error {
+	command := "xdg-settings"
 	if err := checkOnClassic(); err != nil {
 		// FIX ON ALL: only return if we are on pure classic, not if we are on Classic Desktop
 		//return err
+		command = "/snap/snapd/current/scripts/xdg-settings"
 	}
 
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
@@ -375,7 +387,7 @@ func (s *Settings) SetSub(setting string, subproperty string, new string, sender
 		return err
 	}
 
-	cmd := exec.Command("/snap/snapd/current/scripts/xdg-settings", "set", setting, subproperty, desktopFile)
+	cmd := exec.Command(command, "set", setting, subproperty, desktopFile)
 	if _, err := checkOutput(cmd, "set", settingSub); err != nil {
 		return err
 	}
