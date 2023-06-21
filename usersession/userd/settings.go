@@ -244,6 +244,9 @@ func (s *Settings) Check(setting string, check string, sender dbus.Sender) (stri
 	settingMain := &settingSpec{setting: setting}
 	desktopFile, err := desktopFileFromValueForSetting(s, "check", settingMain, check, sender)
 	if err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return "", err2
+		}
 		return "", err
 	}
 
@@ -271,6 +274,9 @@ func (s *Settings) CheckSub(setting string, subproperty string, check string, se
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
 	desktopFile, err := desktopFileFromValueForSetting(s, "check", settingSub, check, sender)
 	if err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return "", err2
+		}
 		return "", err
 	}
 
@@ -297,6 +303,9 @@ func (s *Settings) Get(setting string, sender dbus.Sender) (string, *dbus.Error)
 
 	settingMain := &settingSpec{setting: setting}
 	if err := settingMain.validate(); err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return "", err2
+		}
 		return "", err
 	}
 
@@ -323,6 +332,9 @@ func (s *Settings) GetSub(setting string, subproperty string, sender dbus.Sender
 
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
 	if err := settingSub.validate(); err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return "", err2
+		}
 		return "", err
 	}
 
@@ -350,6 +362,9 @@ func (s *Settings) Set(setting string, new string, sender dbus.Sender) *dbus.Err
 	settingMain := &settingSpec{setting: setting}
 	desktopFile, err := desktopFileFromValueForSetting(s, "set", settingMain, new, sender)
 	if err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return err2
+		}
 		return err
 	}
 
@@ -380,6 +395,9 @@ func (s *Settings) SetSub(setting string, subproperty string, new string, sender
 	settingSub := &settingSpec{setting: setting, subproperty: subproperty}
 	desktopFile, err := desktopFileFromValueForSetting(s, "set", settingSub, new, sender)
 	if err != nil {
+		if err2 := checkOnClassic(); err2 != nil {
+			return err2
+		}
 		return err
 	}
 

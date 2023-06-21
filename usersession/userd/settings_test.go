@@ -399,21 +399,21 @@ func (s *settingsSuite) TestFailsOnUbuntuCore(c *C) {
 	defer restore()
 
 	_, err := s.settings.Check("default-web-browser", "foo.desktop", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 
 	_, err = s.settings.CheckSub("default-url-scheme-handler", "irc", "bar.desktop", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 
 	_, err = s.settings.Get("default-web-browser", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 
 	_, err = s.settings.GetSub("default-url-scheme-handler", "irc", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 
 	err = s.settings.Set("default-web-browser", "foo.desktop", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 	err = s.settings.SetSub("default-url-scheme-handler", "irc", "ircclient.desktop", ":some-dbus-sender")
-	c.Check(err, ErrorMatches, "cannot check \"default-web-browser\" setting: fork/exec /snap/snapd/current/scripts/xdg-settings: no such file or directory")
+	c.Check(err, ErrorMatches, "not supported on Ubuntu Core")
 
 	c.Check(s.mockXdgSettings.Calls(), HasLen, 0)
 }
