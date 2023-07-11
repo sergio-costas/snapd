@@ -351,12 +351,6 @@ dbus (send)
     interface=io.snapcraft.Settings
     member={Check,CheckSub,Get,GetSub,Set,SetSub}
     peer=(label=unconfined),
-dbus (send)
-    bus=session
-    path=/io/snapcraft/Launcher
-    interface=io.snapcraft.Launcher
-    member={OpenURL,OpenFile}
-    peer=(label=unconfined),
 `
 
 type desktopInterface struct {
