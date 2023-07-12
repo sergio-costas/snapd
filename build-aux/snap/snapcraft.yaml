@@ -87,8 +87,6 @@ parts:
           git diff
         ) > $SNAPCRAFT_PART_INSTALL/usr/lib/snapd/dirty-git-tree-info.txt
       fi
-      mkdir -p $SNAPCRAFT_PART_INSTALL/scripts
-      cp -a $SNAPCRAFT_PROJECT_DIR/scripts/* $SNAPCRAFT_PART_INSTALL/scripts
 
   # xdelta is used to enable delta downloads (even if the host does not have it)
   xdelta3:
