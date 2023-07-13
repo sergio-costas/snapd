@@ -209,7 +209,7 @@ func (s *Launcher) OpenURL(addr string, sender dbus.Sender) *dbus.Error {
 	// this code must not add directories from the snap
 	// to XDG_DATA_DIRS and similar, see
 	// https://ubuntu.com/security/CVE-2020-11934
-	if err := exec.Command("xdg-open", addr).Run(); err != nil {
+	if err := exec.Command("xdg-open-original", addr).Run(); err != nil {
 		return dbus.MakeFailedError(fmt.Errorf("cannot open supplied URL"))
 	}
 
@@ -295,7 +295,7 @@ func (s *Launcher) OpenFile(parentWindow string, clientFd dbus.UnixFD, sender db
 		return dbus.MakeFailedError(fmt.Errorf("permission denied"))
 	}
 
-	if err = exec.Command("xdg-open", filename).Run(); err != nil {
+	if err = exec.Command("xdg-open-original", filename).Run(); err != nil {
 		return dbus.MakeFailedError(fmt.Errorf("cannot open supplied URL"))
 	}
 
