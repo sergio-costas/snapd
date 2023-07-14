@@ -79,8 +79,7 @@ func (s *PrivilegedDesktopLauncher) IntrospectionData() string {
 // DBus interface. The desktopFileID is described here:
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#desktop-file-id
 func (s *PrivilegedDesktopLauncher) OpenDesktopEntry(desktopFileID string, sender dbus.Sender) *dbus.Error {
-	arguments := make([]string, 0)
-	return s.OpenDesktopEntryWithArguments(desktopFileID, arguments, sender)
+	return s.OpenDesktopEntryWithArguments(desktopFileID, nil, sender)
 }
 
 func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID string, arguments []string, sender dbus.Sender) *dbus.Error {
@@ -133,6 +132,9 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID 
 // argumentsSecurityCheck ensures that none of the arguments passed
 // by begins with "-", to avoid passing parameters to the application.
 func argumentsSecurityCheck(arguments []string) error {
+	if arguments == nil {
+		return nil
+	}
 	for i := 0; i < len(arguments); i++ {
 		if arguments[i][0] == '-' {
 			return fmt.Errorf("passed a parameter as argument: %s", arguments[i])
@@ -314,9 +316,13 @@ func parseExecCommand(command string, icon string, arguments []string) ([]string
 		} else if strings.HasPrefix(arg, "%") {
 			switch arg {
 			case "%f", "%u":
-				args = append(args, arguments[0])
+				if (arguments != nil) && (len(arguments) > 0) {
+					args = append(args, arguments[0])
+				}
 			case "%F", "%U":
-				args = append(args, arguments...)
+				if (arguments != nil) && (len(arguments) > 0) {
+					args = append(args, arguments...)
+				}
 			case "%i":
 				args = append(args, "--icon", icon)
 			default:
