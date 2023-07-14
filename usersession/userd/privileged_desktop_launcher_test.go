@@ -135,3 +135,10 @@ func (s *privilegedDesktopLauncherSuite) TestOpenDesktopEntryFailsForNonSnap(c *
 	err := s.launcher.OpenDesktopEntry("shadow-test.desktop", ":some-dbus-sender")
 	c.Check(err, ErrorMatches, `only launching snap applications from .* is supported`)
 }
+
+func (s *privilegedDesktopLauncherSuite) TestArgumentsSecurity(c *C) {
+	err := userd.ArgumentsSecurityCheck([]string{"param1", "param2"})
+	c.Check(err, IsNil)
+	err = userd.ArgumentsSecurityCheck([]string{"param1", "-param2"})
+	c.Check(err, NotNil)
+}
