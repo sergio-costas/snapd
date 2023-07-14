@@ -48,6 +48,10 @@ const privilegedLauncherIntrospectionXML = `
 	<method name='OpenDesktopEntry'>
 		<arg type='s' name='desktop_file_id' direction='in'/>
 	</method>
+	<method name='OpenDesktopEntryWithParameters'>
+		<arg type='s' name='desktop_file_id' direction='in'/>
+		<arg type='as' name='parameters' direction='in' />
+	</method>
 </interface>`
 
 // PrivilegedDesktopLauncher implements the 'io.snapcraft.PrivilegedDesktopLauncher' DBus interface.
@@ -75,6 +79,11 @@ func (s *PrivilegedDesktopLauncher) IntrospectionData() string {
 // DBus interface. The desktopFileID is described here:
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#desktop-file-id
 func (s *PrivilegedDesktopLauncher) OpenDesktopEntry(desktopFileID string, sender dbus.Sender) *dbus.Error {
+	parameters := make([]string, 0)
+	return s.OpenDesktopEntryWithParameters(desktopFileID, parameters, sender)
+}
+
+func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithParameters(desktopFileID string, parameters []string, sender dbus.Sender) *dbus.Error {
 	desktopFile, err := desktopFileIDToFilename(desktopFileID)
 	if err != nil {
 		return dbus.MakeFailedError(err)
@@ -90,7 +99,7 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntry(desktopFileID string, sende
 		return dbus.MakeFailedError(err)
 	}
 
-	args, err := parseExecCommand(command, icon)
+	args, err := parseExecCommand(command, icon, parameters)
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
@@ -276,7 +285,7 @@ func readExecCommandFromDesktopFile(desktopFile string) (exec string, icon strin
 // implications that must be thought through regarding the influence of the launching
 // snap over the launcher wrt exec variables. For now we simply filter them out.
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#exec-variables
-func parseExecCommand(command string, icon string) ([]string, error) {
+func parseExecCommand(command string, icon string, parameters []string) ([]string, error) {
 	origArgs, err := shlex.Split(command)
 	if err != nil {
 		return nil, err
@@ -290,12 +299,10 @@ func parseExecCommand(command string, icon string) ([]string, error) {
 			arg = arg[1:]
 		} else if strings.HasPrefix(arg, "%") {
 			switch arg {
-			case "%f", "%F", "%u", "%U":
-				// If we were launching a file with
-				// the application, these variables
-				// would expand to file names or URIs.
-				// As we're not, they are simply
-				// removed from the argument list.
+			case "%f", "%u":
+				args = append(args, parameters[0])
+			case "%F", "%U":
+				args = append(args, parameters...)
 			case "%i":
 				args = append(args, "--icon", icon)
 			default:
