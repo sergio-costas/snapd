@@ -59,7 +59,7 @@ dbus (send)
     bus=session
     path=/io/snapcraft/PrivilegedDesktopLauncher
     interface=io.snapcraft.PrivilegedDesktopLauncher
-    member="OpenDesktopEntry{,WithParameters}"
+    member="OpenDesktopEntry{,WithArguments}"
     peer=(label=unconfined),
 `
 

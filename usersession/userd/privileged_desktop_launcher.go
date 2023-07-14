@@ -48,9 +48,9 @@ const privilegedLauncherIntrospectionXML = `
 	<method name='OpenDesktopEntry'>
 		<arg type='s' name='desktop_file_id' direction='in'/>
 	</method>
-	<method name='OpenDesktopEntryWithParameters'>
+	<method name='OpenDesktopEntryWithArguments'>
 		<arg type='s' name='desktop_file_id' direction='in'/>
-		<arg type='as' name='parameters' direction='in' />
+		<arg type='as' name='arguments' direction='in' />
 	</method>
 </interface>`
 
@@ -79,11 +79,14 @@ func (s *PrivilegedDesktopLauncher) IntrospectionData() string {
 // DBus interface. The desktopFileID is described here:
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#desktop-file-id
 func (s *PrivilegedDesktopLauncher) OpenDesktopEntry(desktopFileID string, sender dbus.Sender) *dbus.Error {
-	parameters := make([]string, 0)
-	return s.OpenDesktopEntryWithParameters(desktopFileID, parameters, sender)
+	arguments := make([]string, 0)
+	return s.OpenDesktopEntryWithArguments(desktopFileID, arguments, sender)
 }
 
-func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithParameters(desktopFileID string, parameters []string, sender dbus.Sender) *dbus.Error {
+func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID string, arguments []string, sender dbus.Sender) *dbus.Error {
+	if err := argumentsSecurityCheck(arguments); err != nil {
+		return dbus.MakeFailedError(err)
+	}
 	desktopFile, err := desktopFileIDToFilename(desktopFileID)
 	if err != nil {
 		return dbus.MakeFailedError(err)
@@ -99,7 +102,7 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithParameters(desktopFileID
 		return dbus.MakeFailedError(err)
 	}
 
-	args, err := parseExecCommand(command, icon, parameters)
+	args, err := parseExecCommand(command, icon, arguments)
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
@@ -124,6 +127,17 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithParameters(desktopFileID
 		return dbus.MakeFailedError(fmt.Errorf("cannot run %q: %v", command, err))
 	}
 
+	return nil
+}
+
+// argumentsSecurityCheck ensures that none of the arguments passed
+// by begins with "-", to avoid passing parameters to the application.
+func argumentsSecurityCheck(arguments []string) error {
+	for i := 0; i < len(arguments); i++ {
+		if arguments[i][0] == '-' {
+			return fmt.Errorf("passed a parameter as argument: %s", arguments[i])
+		}
+	}
 	return nil
 }
 
@@ -285,7 +299,7 @@ func readExecCommandFromDesktopFile(desktopFile string) (exec string, icon strin
 // implications that must be thought through regarding the influence of the launching
 // snap over the launcher wrt exec variables. For now we simply filter them out.
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#exec-variables
-func parseExecCommand(command string, icon string, parameters []string) ([]string, error) {
+func parseExecCommand(command string, icon string, arguments []string) ([]string, error) {
 	origArgs, err := shlex.Split(command)
 	if err != nil {
 		return nil, err
@@ -300,9 +314,9 @@ func parseExecCommand(command string, icon string, parameters []string) ([]strin
 		} else if strings.HasPrefix(arg, "%") {
 			switch arg {
 			case "%f", "%u":
-				args = append(args, parameters[0])
+				args = append(args, arguments[0])
 			case "%F", "%U":
-				args = append(args, parameters...)
+				args = append(args, arguments...)
 			case "%i":
 				args = append(args, "--icon", icon)
 			default:
