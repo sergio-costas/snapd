@@ -53,6 +53,15 @@ const desktopConnectedPlugAppArmor = `
 #include <abstractions/dbus-strict>
 #include <abstractions/dbus-session-strict>
 
+# Allow use of snapd's internal 'xdg-settings'
+/usr/bin/xdg-settings ixr,
+dbus (send)
+    bus=session
+    path=/io/snapcraft/Settings
+    interface=io.snapcraft.Settings
+    member={Check,CheckSub,Get,GetSub,Set,SetSub}
+    peer=(label=unconfined),
+
 # Allow finding the DBus session bus id (eg, via dbus_bus_get_id())
 dbus (send)
      bus=session
@@ -284,15 +293,6 @@ dbus (receive)
     member=Introspect
     peer=(label=unconfined),
 
-# Allow use of snapd's internal 'xdg-settings'
-/usr/bin/xdg-settings ixr,
-dbus (send)
-    bus=session
-    path=/io/snapcraft/Settings
-    interface=io.snapcraft.Settings
-    member={Check,CheckSub,Get,GetSub,Set,SetSub}
-    peer=(label=unconfined),
-
 # These accesses are noisy and applications can't do anything with the found
 # icon files, so explicitly deny to silence the denials
 deny /var/lib/snapd/desktop/icons/{,**/} r,
@@ -342,6 +342,15 @@ dbus (send)
     peer=(label=unconfined),
 /etc/xdg/user-dirs.conf r,
 /etc/xdg/user-dirs.defaults r,
+
+# Allow use of snapd's internal 'xdg-settings'
+/usr/bin/xdg-settings ixr,
+dbus (send)
+    bus=session
+    path=/io/snapcraft/Settings
+    interface=io.snapcraft.Settings
+    member={Check,CheckSub,Get,GetSub,Set,SetSub}
+    peer=(label=unconfined),
 `
 
 type desktopInterface struct {
