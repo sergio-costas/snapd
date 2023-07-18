@@ -501,7 +501,7 @@ func (s *privilegedDesktopLauncherInternalSuite) TestParseExecCommandSucceedsWit
 	}
 
 	for _, test := range testCases {
-		actual, err := userd.ParseExecCommand(test.cmd, "/snap/chromium/1193/chromium.png")
+		actual, err := userd.ParseExecCommand(test.cmd, "/snap/chromium/1193/chromium.png", nil)
 		comment := Commentf("cmd=%s", test.cmd)
 		c.Check(err, IsNil, comment)
 		c.Check(actual, DeepEquals, test.expect, comment)
