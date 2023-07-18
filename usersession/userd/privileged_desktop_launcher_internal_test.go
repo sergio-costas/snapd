@@ -523,7 +523,7 @@ func (s *privilegedDesktopLauncherInternalSuite) TestParseExecCommandFailsWithIn
 	}
 
 	for _, test := range testCases {
-		_, err := userd.ParseExecCommand(test.cmd, "/snap/chromium/1193/chromium.png")
+		_, err := userd.ParseExecCommand(test.cmd, "/snap/chromium/1193/chromium.png", nil)
 		comment := Commentf("cmd=%s", test.cmd)
 		c.Check(err, ErrorMatches, test.err, comment)
 	}
