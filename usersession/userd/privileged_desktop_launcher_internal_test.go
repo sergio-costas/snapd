@@ -537,7 +537,7 @@ func (s *privilegedDesktopLauncherInternalSuite) testReadExecCommandFromDesktopF
 	err := ioutil.WriteFile(desktopFile, []byte(fileContent), 0644)
 	c.Assert(err, IsNil)
 
-	exec, icon, err := userd.ReadExecCommandFromDesktopFile(desktopFile)
+	exec, icon, err := userd.ReadExecCommandFromDesktopFile(desktopFile, "")
 	c.Assert(err, IsNil)
 
 	c.Check(exec, Equals, fmt.Sprintf("env BAMF_DESKTOP_FILE_HINT=%s %s/chromium %%U", desktopFile, dirs.SnapBinariesDir))
@@ -571,7 +571,7 @@ func (s *privilegedDesktopLauncherInternalSuite) TestReadExecCommandFromDesktopF
 	err := ioutil.WriteFile(desktopFile, []byte(chromiumDesktopFile), 0644)
 	c.Assert(err, IsNil)
 
-	_, _, err = userd.ReadExecCommandFromDesktopFile(desktopFile)
+	_, _, err = userd.ReadExecCommandFromDesktopFile(desktopFile, "")
 	c.Assert(err, ErrorMatches, `desktop file ".*" has an unsupported 'Exec' value: .*`)
 }
 
@@ -585,7 +585,7 @@ func (s *privilegedDesktopLauncherInternalSuite) TestReadExecCommandFromDesktopF
 	err := ioutil.WriteFile(desktopFile, []byte(fileContent), 0644)
 	c.Assert(err, IsNil)
 
-	_, _, err = userd.ReadExecCommandFromDesktopFile(desktopFile)
+	_, _, err = userd.ReadExecCommandFromDesktopFile(desktopFile, "")
 	c.Assert(err, ErrorMatches, `desktop file ".*" has an unsupported 'Exec' value: ""`)
 }
 
@@ -598,13 +598,13 @@ Exec=foo
 Exec=bar
 `), 0644), IsNil)
 
-	_, _, err := userd.ReadExecCommandFromDesktopFile(desktopFile)
+	_, _, err := userd.ReadExecCommandFromDesktopFile(desktopFile, "")
 	c.Check(err, ErrorMatches, `desktop file ".*" has multiple \[Desktop Entry\] sections`)
 }
 
 func (s *privilegedDesktopLauncherInternalSuite) TestReadExecCommandFromDesktopFileWithNoFile(c *C) {
 	desktopFile := filepath.Join(c.MkDir(), "test.desktop")
 
-	_, _, err := userd.ReadExecCommandFromDesktopFile(desktopFile)
+	_, _, err := userd.ReadExecCommandFromDesktopFile(desktopFile, "")
 	c.Assert(err, ErrorMatches, `open .*: no such file or directory`)
 }

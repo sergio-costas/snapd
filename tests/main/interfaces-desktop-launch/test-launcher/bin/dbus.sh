@@ -2,5 +2,5 @@
 
 exec dbus-send --session --print-reply \
     --dest=io.snapcraft.Launcher /io/snapcraft/PrivilegedDesktopLauncher \
-    io.snapcraft.PrivilegedDesktopLauncher.OpenDesktopEntryWithArguments \
-    string:"$1" array:string:"$2"
+    io.snapcraft.PrivilegedDesktopLauncher.OpenDesktopEntry2 \
+    string:"$1" string:"" array:string:"$2" {}

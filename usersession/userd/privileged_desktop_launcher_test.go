@@ -137,8 +137,10 @@ func (s *privilegedDesktopLauncherSuite) TestOpenDesktopEntryFailsForNonSnap(c *
 }
 
 func (s *privilegedDesktopLauncherSuite) TestArgumentsSecurity(c *C) {
-	err := userd.ArgumentsSecurityCheck([]string{"param1", "param2"})
+	err := userd.ArgumentsSecurityCheck([]string{"http://param1", "file:///param2.txt"})
 	c.Check(err, IsNil)
-	err = userd.ArgumentsSecurityCheck([]string{"param1", "-param2"})
+	err = userd.ArgumentsSecurityCheck([]string{"-param2"})
+	c.Check(err, NotNil)
+	err = userd.ArgumentsSecurityCheck([]string{"file://a/test.txt"})
 	c.Check(err, NotNil)
 }

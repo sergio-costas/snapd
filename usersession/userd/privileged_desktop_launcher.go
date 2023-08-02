@@ -22,6 +22,7 @@ package userd
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,9 +49,11 @@ const privilegedLauncherIntrospectionXML = `
 	<method name='OpenDesktopEntry'>
 		<arg type='s' name='desktop_file_id' direction='in'/>
 	</method>
-	<method name='OpenDesktopEntryWithArguments'>
+	<method name='OpenDesktopEntry2'>
 		<arg type='s' name='desktop_file_id' direction='in'/>
+		<arg type='s' name='action' direction='in'/>
 		<arg type='as' name='arguments' direction='in' />
+		<arg type='a{ss}' name='environment' direction='in' />
 	</method>
 </interface>`
 
@@ -79,13 +82,10 @@ func (s *PrivilegedDesktopLauncher) IntrospectionData() string {
 // DBus interface. The desktopFileID is described here:
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#desktop-file-id
 func (s *PrivilegedDesktopLauncher) OpenDesktopEntry(desktopFileID string, sender dbus.Sender) *dbus.Error {
-	return s.OpenDesktopEntryWithArguments(desktopFileID, nil, sender)
+	return s.OpenDesktopEntry2(desktopFileID, "", nil, nil, sender)
 }
 
-func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID string, arguments []string, sender dbus.Sender) *dbus.Error {
-	if err := argumentsSecurityCheck(arguments); err != nil {
-		return dbus.MakeFailedError(err)
-	}
+func (s *PrivilegedDesktopLauncher) OpenDesktopEntry2(desktopFileID string, action string, uris []string, environment map[string]string, sender dbus.Sender) *dbus.Error {
 	desktopFile, err := desktopFileIDToFilename(desktopFileID)
 	if err != nil {
 		return dbus.MakeFailedError(err)
@@ -96,12 +96,16 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID 
 		return dbus.MakeFailedError(err)
 	}
 
-	command, icon, err := readExecCommandFromDesktopFile(desktopFile)
+	if err := argumentsSecurityCheck(uris); err != nil {
+		return dbus.MakeFailedError(err)
+	}
+
+	command, icon, err := readExecCommandFromDesktopFile(desktopFile, action)
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
 
-	args, err := parseExecCommand(command, icon, arguments)
+	args, err := parseExecCommand(command, icon, uris)
 	if err != nil {
 		return dbus.MakeFailedError(err)
 	}
@@ -129,15 +133,22 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntryWithArguments(desktopFileID 
 	return nil
 }
 
-// argumentsSecurityCheck ensures that none of the arguments passed
-// by begins with "-", to avoid passing parameters to the application.
+// argumentsSecurityCheck ensures that all of the arguments passed
+// by are URIs, to avoid security problems.
 func argumentsSecurityCheck(arguments []string) error {
-	if arguments == nil {
-		return nil
-	}
-	for i := 0; i < len(arguments); i++ {
-		if arguments[i][0] == '-' {
-			return fmt.Errorf("passed a parameter as argument: %s", arguments[i])
+	for _, arg := range arguments {
+		if arg == "" {
+			return fmt.Errorf("Passed an empty parameter")
+		}
+		uri, err := url.Parse(arg)
+		if err != nil {
+			return fmt.Errorf("One of the parameters is not an URI: %s", arg)
+		}
+		if uri.Path == "" {
+			return fmt.Errorf("Passed an empty URI: %s", arg)
+		}
+		if (uri.Scheme == "file") && (uri.Path[0] != '/') {
+			return fmt.Errorf("Passed a file URI with a relative path: %s", arg)
 		}
 	}
 	return nil
@@ -255,7 +266,7 @@ func verifyDesktopFileLocation(desktopFile string) error {
 
 // readExecCommandFromDesktopFile parses the desktop file to get the Exec entry and
 // checks that the BAMF_DESKTOP_FILE_HINT is present and refers to the desktop file.
-func readExecCommandFromDesktopFile(desktopFile string) (exec string, icon string, err error) {
+func readExecCommandFromDesktopFile(desktopFile string, action string) (exec string, icon string, err error) {
 	file, err := os.Open(desktopFile)
 	if err != nil {
 		return exec, icon, err
@@ -268,14 +279,23 @@ func readExecCommandFromDesktopFile(desktopFile string) (exec string, icon strin
 		line := strings.TrimSpace(scanner.Text())
 
 		if line == "[Desktop Entry]" {
-			if seenDesktopSection {
-				return "", "", fmt.Errorf("desktop file %q has multiple [Desktop Entry] sections", desktopFile)
+			if action == "" {
+				if seenDesktopSection {
+					return "", "", fmt.Errorf("desktop file %q has multiple [Desktop Entry] sections", desktopFile)
+				}
+				seenDesktopSection = true
+				inDesktopSection = true
+			} else {
+				inDesktopSection = false
 			}
-			seenDesktopSection = true
-			inDesktopSection = true
 		} else if strings.HasPrefix(line, "[Desktop Action ") {
-			// TODO: add support for desktop action sections
-			inDesktopSection = false
+			pos := strings.Index(line, "]")
+			if pos != -1 && strings.TrimSpace(line[16:pos]) == action {
+				seenDesktopSection = true
+				inDesktopSection = true
+			} else {
+				inDesktopSection = false
+			}
 		} else if strings.HasPrefix(line, "[") {
 			inDesktopSection = false
 		} else if inDesktopSection {
@@ -301,7 +321,7 @@ func readExecCommandFromDesktopFile(desktopFile string) (exec string, icon strin
 // implications that must be thought through regarding the influence of the launching
 // snap over the launcher wrt exec variables. For now we simply filter them out.
 // https://standards.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#exec-variables
-func parseExecCommand(command string, icon string, arguments []string) ([]string, error) {
+func parseExecCommand(command string, icon string, uris []string) ([]string, error) {
 	origArgs, err := shlex.Split(command)
 	if err != nil {
 		return nil, err
@@ -315,13 +335,31 @@ func parseExecCommand(command string, icon string, arguments []string) ([]string
 			arg = arg[1:]
 		} else if strings.HasPrefix(arg, "%") {
 			switch arg {
-			case "%f", "%u":
-				if (arguments != nil) && (len(arguments) > 0) {
-					args = append(args, arguments[0])
+			case "%u":
+				if (uris != nil) && (len(uris) > 0) {
+					args = append(args, uris[0])
 				}
-			case "%F", "%U":
-				if (arguments != nil) && (len(arguments) > 0) {
-					args = append(args, arguments...)
+			case "%U":
+				if (uris != nil) && (len(uris) > 0) {
+					args = append(args, uris...)
+				}
+			case "%f":
+				if (uris != nil) && (len(uris) > 0) {
+					uri, _ := url.Parse(uris[0])
+					if uri.Scheme != "file" {
+						return nil, fmt.Errorf("cannot run %q because it expects a file, but a non-file URI (%q) was passed", command, uris[0])
+					}
+					args = append(args, uri.Path)
+				}
+			case "%F":
+				if (uris != nil) && (len(uris) > 0) {
+					for uri := range uris {
+						uri_parsed, _ := url.Parse(uris[0])
+						if uri_parsed.Scheme != "file" {
+							return nil, fmt.Errorf("cannot run %q because it expects files, but a non-file URI (%q) was passed", command, uri)
+						}
+						args = append(args, uri_parsed.Path)
+					}
 				}
 			case "%i":
 				args = append(args, "--icon", icon)
