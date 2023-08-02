@@ -138,17 +138,17 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntry2(desktopFileID string, acti
 func argumentsSecurityCheck(arguments []string) error {
 	for _, arg := range arguments {
 		if arg == "" {
-			return fmt.Errorf("Passed an empty parameter")
+			return fmt.Errorf("passed an empty parameter")
 		}
 		uri, err := url.Parse(arg)
 		if err != nil {
-			return fmt.Errorf("One of the parameters is not an URI: %s", arg)
+			return fmt.Errorf("one of the parameters is not an URI: %s", arg)
 		}
-		if uri.Path == "" {
-			return fmt.Errorf("Passed an empty URI: %s", arg)
+		if uri.Host == "" && uri.Path == "" {
+			return fmt.Errorf("passed an empty URI: %s", arg)
 		}
 		if (uri.Scheme == "file") && (uri.Path[0] != '/') {
-			return fmt.Errorf("Passed a file URI with a relative path: %s", arg)
+			return fmt.Errorf("passed a file URI with a relative path: %s", arg)
 		}
 	}
 	return nil
