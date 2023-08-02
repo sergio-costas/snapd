@@ -340,9 +340,7 @@ func parseExecCommand(command string, icon string, uris []string) ([]string, err
 					args = append(args, uris[0])
 				}
 			case "%U":
-				if (uris != nil) && (len(uris) > 0) {
-					args = append(args, uris...)
-				}
+				args = append(args, uris...)
 			case "%f":
 				if (uris != nil) && (len(uris) > 0) {
 					uri, _ := url.Parse(uris[0])
@@ -353,7 +351,7 @@ func parseExecCommand(command string, icon string, uris []string) ([]string, err
 				}
 			case "%F":
 				if (uris != nil) && (len(uris) > 0) {
-					for uri := range uris {
+					for _, uri := range uris {
 						uri_parsed, _ := url.Parse(uris[0])
 						if uri_parsed.Scheme != "file" {
 							return nil, fmt.Errorf("cannot run %q because it expects files, but a non-file URI (%q) was passed", command, uri)
