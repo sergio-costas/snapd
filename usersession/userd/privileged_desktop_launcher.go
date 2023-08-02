@@ -147,7 +147,7 @@ func argumentsSecurityCheck(arguments []string) error {
 		if uri.Host == "" && uri.Path == "" {
 			return fmt.Errorf("passed an empty URI: %s", arg)
 		}
-		if (uri.Scheme == "file") && (uri.Path[0] != '/') {
+		if (uri.Scheme == "file") && (uri.Host != "" || uri.Path[0] != '/') {
 			return fmt.Errorf("passed a file URI with a relative path: %s", arg)
 		}
 	}
