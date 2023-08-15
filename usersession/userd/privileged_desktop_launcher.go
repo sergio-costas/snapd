@@ -100,6 +100,10 @@ func (s *PrivilegedDesktopLauncher) OpenDesktopEntry2(desktopFileID string, acti
 		return dbus.MakeFailedError(err)
 	}
 
+	if len(environment) != 0 {
+		return dbus.MakeFailedError(fmt.Errorf("unknown variables in environment"))
+	}
+
 	command, icon, err := readExecCommandFromDesktopFile(desktopFile, action)
 	if err != nil {
 		return dbus.MakeFailedError(err)
