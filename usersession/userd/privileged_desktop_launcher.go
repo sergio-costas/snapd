@@ -144,11 +144,16 @@ func argumentsSecurityCheck(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("one of the parameters is not an URI: %s", arg)
 		}
-		if uri.Host == "" && uri.Path == "" {
-			return fmt.Errorf("passed an empty URI: %s", arg)
+		if !uri.IsAbs() {
+			return fmt.Errorf("passed a non-absolute URI: %s", arg)
 		}
-		if (uri.Scheme == "file") && (uri.Host != "" || uri.Path[0] != '/') {
-			return fmt.Errorf("passed a file URI with a relative path: %s", arg)
+		if uri.Scheme == "file" {
+			if uri.Host != "" {
+				return fmt.Errorf("passed a file URI with a non-empty host: %s", arg)
+			}
+			if !filepath.IsAbs(uri.Path) {
+				return fmt.Errorf("passed a file URI with a relative path: %s", arg)
+			}
 		}
 	}
 	return nil

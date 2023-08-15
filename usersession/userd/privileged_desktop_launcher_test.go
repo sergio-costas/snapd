@@ -137,10 +137,12 @@ func (s *privilegedDesktopLauncherSuite) TestOpenDesktopEntryFailsForNonSnap(c *
 }
 
 func (s *privilegedDesktopLauncherSuite) TestArgumentsSecurity(c *C) {
-	err := userd.ArgumentsSecurityCheck([]string{"http://param1.com", "file:///param2.txt"})
+	err := userd.ArgumentsSecurityCheck([]string{"http://param1.com", "file:///param2.txt", "mailto:user@example.org"})
 	c.Check(err, IsNil)
 	err = userd.ArgumentsSecurityCheck([]string{"-param2"})
-	c.Check(err, NotNil)
+	c.Check(err, ErrorMatches, `passed a non-absolute URI: -param2`)
 	err = userd.ArgumentsSecurityCheck([]string{"file://a/test.txt"})
-	c.Check(err, NotNil)
+	c.Check(err, ErrorMatches, `passed a file URI with a non-empty host: file://a/test.txt`)
+	err = userd.ArgumentsSecurityCheck([]string{"file:test.txt"})
+	c.Check(err, ErrorMatches, `passed a file URI with a relative path: file:test.txt`)
 }
