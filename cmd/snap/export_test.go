@@ -99,6 +99,8 @@ var (
 
 	GetSnapDirOptions                   = getSnapDirOptions
 	SnapInstancesAndComponentsFromNames = snapInstancesAndComponentsFromNames
+
+	CmdlineArgsToUris = cmdlineArgsToUris
 )
 
 func HiddenCmd(descr string, completeHidden bool) *cmdInfo {
