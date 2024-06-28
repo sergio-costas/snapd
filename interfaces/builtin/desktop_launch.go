@@ -61,7 +61,6 @@ dbus (send)
     peer=(label=unconfined),
 `
 
-// Only implicitOnClassic since userd isn't yet usable on core
 func init() {
 	registerIface(&commonInterface{
 		name:                  "desktop-launch",
