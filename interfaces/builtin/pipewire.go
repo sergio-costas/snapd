@@ -96,7 +96,7 @@ func (iface *pipewireInterface) Name() string {
 func (iface *pipewireInterface) StaticInfo() interfaces.StaticInfo {
 	return interfaces.StaticInfo{
 		Summary:              pipewireSummary,
-		ImplicitOnClassic:    true,
+		ImplicitOnClassic:    false,
 		ImplicitOnCore:       false,
 		BaseDeclarationSlots: pipewireBaseDeclarationSlots,
 	}
