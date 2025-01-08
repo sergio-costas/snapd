@@ -98,9 +98,9 @@ if [ -z "$version_from_user" ] && [ "$version_from_git" != "" ] && \
         echo "Cannot generate version, there is a version from git and the changelog has a git version"
         exit 1
     else
-        revno=$(git describe --always --abbrev=7|cut -d- -f2)
+        #revno=$(git describe --always --abbrev=7|cut -d- -f2)
         commit=$(git describe --always --abbrev=7|cut -d- -f3)
-        v="${version_from_changelog}+git${revno}.${commit}"
+        v="${version_from_changelog}+git${commit}"
         o="changelog+git"
     fi
 fi
