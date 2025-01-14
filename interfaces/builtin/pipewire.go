@@ -36,6 +36,8 @@ const pipewireBaseDeclarationSlots = `
       slot-snap-type:
         - app
     deny-auto-connection: true
+	deny-connection:
+      on-classic: false
 `
 
 const pipewireConnectedPlugAppArmor = `
@@ -44,10 +46,12 @@ const pipewireConnectedPlugAppArmor = `
 
 owner /run/user/[0-9]*/ r,
 owner /run/user/[0-9]*/pipewire-[0-9] rw,
+owner /run/user/[0-9]*/pipewire-[0-9]-manager rw,
 `
 
 const pipewireConnectedPlugAppArmorCore = `
 owner /run/user/[0-9]*/###SLOT_SECURITY_TAGS###/pipewire-[0-9] rw,
+owner /run/user/[0-9]*/###SLOT_SECURITY_TAGS###/pipewire-[0-9]-manager rw,
 `
 
 const pipewireConnectedPlugSecComp = `
@@ -59,7 +63,6 @@ capability sys_nice,
 capability sys_resource,
 
 owner @{PROC}/@{pid}/exe r,
-/etc/machine-id r,
 
 # For udev
 network netlink raw,
@@ -87,19 +90,8 @@ shmctl
 socket AF_NETLINK - NETLINK_KOBJECT_UEVENT
 `
 
-type pipewireInterface struct{}
-
-func (iface *pipewireInterface) Name() string {
-	return "pipewire"
-}
-
-func (iface *pipewireInterface) StaticInfo() interfaces.StaticInfo {
-	return interfaces.StaticInfo{
-		Summary:              pipewireSummary,
-		ImplicitOnClassic:    false,
-		ImplicitOnCore:       false,
-		BaseDeclarationSlots: pipewireBaseDeclarationSlots,
-	}
+type pipewireInterface struct {
+	commonInterface
 }
 
 func (iface *pipewireInterface) AppArmorConnectedPlug(spec *apparmor.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
@@ -118,11 +110,6 @@ func (iface *pipewireInterface) AppArmorPermanentSlot(spec *apparmor.Specificati
 	return nil
 }
 
-func (iface *pipewireInterface) SecCompConnectedPlug(spec *seccomp.Specification, plug *interfaces.ConnectedPlug, slot *interfaces.ConnectedSlot) error {
-	spec.AddSnippet(pipewireConnectedPlugSecComp)
-	return nil
-}
-
 func (iface *pipewireInterface) SecCompPermanentSlot(spec *seccomp.Specification, slot *snap.SlotInfo) error {
 	spec.AddSnippet(pipewirePermanentSlotSecComp)
 	return nil
@@ -133,5 +120,12 @@ func (iface *pipewireInterface) AutoConnect(*snap.PlugInfo, *snap.SlotInfo) bool
 }
 
 func init() {
-	registerIface(&pipewireInterface{})
+	registerIface(&pipewireInterface{commonInterface: commonInterface{
+		name:                 "pipewire",
+		summary:              pipewireSummary,
+		implicitOnCore:       false,
+		implicitOnClassic:    true,
+		baseDeclarationSlots: pipewireBaseDeclarationSlots,
+		connectedPlugSecComp: pipewireConnectedPlugSecComp,
+	}})
 }
