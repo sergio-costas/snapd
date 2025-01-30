@@ -117,7 +117,7 @@ fi
 
 # ensure that version string has, at most, 32 characters,
 # to ensure that snapcraft doesn't complain.
-v=$(echo $v | cut -c1-32)
+v=$(echo "$v" | cut -c1-32)
 
 echo "*** Setting version to '$v' from $o." >&2
 
