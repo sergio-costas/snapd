@@ -98,9 +98,9 @@ if [ -z "$version_from_user" ] && [ "$version_from_git" != "" ] && \
         echo "Cannot generate version, there is a version from git and the changelog has a git version"
         exit 1
     else
-        #revno=$(git describe --always --abbrev=7|cut -d- -f2)
+        revno=$(git describe --always --abbrev=7|cut -d- -f2)
         commit=$(git describe --always --abbrev=7|cut -d- -f3)
-        v="${version_from_changelog}+git${commit}"
+        v="${version_from_changelog}+git${revno}.${commit}"
         o="changelog+git"
     fi
 fi
@@ -114,6 +114,10 @@ if [ "$OUTPUT_ONLY" = true ]; then
     echo "$v"
     exit 0
 fi
+
+# ensure that version string has, at most, 32 characters,
+# to ensure that snapcraft doesn't complain.
+v=$(echo $v | cut -c1-32)
 
 echo "*** Setting version to '$v' from $o." >&2
 
