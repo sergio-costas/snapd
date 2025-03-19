@@ -55,7 +55,6 @@ jobs:
           sudo apt build-dep -d -y ${{ github.workspace }}
           # for indent
           sudo apt install texinfo autopoint
-          sudo snap install yq
 
     - name: Copy dependencies
       run: |
@@ -101,7 +100,7 @@ jobs:
         system_daily="$(yq '.jobs.spread.strategy.matrix.include.[] | select(.group == "ubuntu-daily") | .systems'  test_master.yaml)"
         current_daily="$(yq '.jobs.spread.strategy.matrix.include.[] | select(.group == "ubuntu-daily") | .systems'  .github/workflows/test.yaml)"
         test "$system_daily" == "$current_daily"
-      shell: bash
+      shell: /bin/bash
 
   unit-tests:
     uses: ./.github/workflows/unit-tests.yaml
