@@ -554,7 +554,7 @@ dbus (send)
     bus=session
     path=/org/freedesktop/systemd1
     interface=org.freedesktop.systemd1.Manager
-    member=StartTransientUnit
+    member={StartTransientUnit, StopUnit}
     peer=(label=unconfined),
 
 # Allow access to GDM's private reauthentication channel socket
