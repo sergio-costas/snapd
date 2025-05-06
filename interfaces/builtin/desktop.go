@@ -692,7 +692,9 @@ profile passwd_helper (attach_disconnected,mediate_deleted) {
   /var/lib/extrausers/shadow rw,
   /var/lib/extrausers/gshadow rw,
   # passwd wants to create the .pwd.lock file
-  /var/lib/extrausers/.pwd.lock rw,
+  /var/lib/extrausers/.pwd rwk,
+  /var/lib/extrausers/.pwd.lock rwk,
+  /var/lib/extrausers/nshadow rw,
   /var/lib/extrausers rw,
 
   # Capabilities required by various PAM modules
