@@ -689,6 +689,12 @@ profile passwd_helper (attach_disconnected,mediate_deleted) {
   # pam-extrausers on Ubuntu Core.
   #include <abstractions/nameservice>
   #include <abstractions/authentication>
+  /etc/passwd rw,
+  /etc/group rw,
+  /etc/shadow rw,
+  /etc/gshadow rw,
+  /var/lib/extrausers/passwd rw,
+  /var/lib/extrausers/group rw,
   /var/lib/extrausers/shadow rw,
   /var/lib/extrausers/gshadow rw,
   # passwd wants to create the .pwd.lock file
