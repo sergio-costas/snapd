@@ -1680,7 +1680,7 @@ func (s *RunSuite) TestSnapRunExposeKerberosTickets(c *check.C) {
 	// and run it!
 	rest, err := snaprun.Parser(snaprun.Client()).ParseArgs([]string{"run", "--", "snapname.app"})
 	c.Assert(err, check.IsNil)
-	c.Assert(rest, check.DeepEquals, []string{"snapname.app"})
+	c.Assert(rest, check.DeepEquals, []string{})
 	c.Check(execArg0, check.Equals, filepath.Join(dirs.DistroLibExecDir, "snap-confine"))
 	c.Check(execArgs, check.DeepEquals, []string{
 		filepath.Join(dirs.DistroLibExecDir, "snap-confine"),
@@ -1708,7 +1708,7 @@ func (s *RunSuite) TestSnapRunExposeKerberosTickets(c *check.C) {
 
 	rest, err = snaprun.Parser(snaprun.Client()).ParseArgs([]string{"run", "--", "snapname.app"})
 	c.Assert(err, check.IsNil)
-	c.Assert(rest, check.DeepEquals, []string{"snapname.app"})
+	c.Assert(rest, check.DeepEquals, []string{})
 	c.Check(execArg0, check.Equals, filepath.Join(dirs.DistroLibExecDir, "snap-confine"))
 	c.Check(execArgs, check.DeepEquals, []string{
 		filepath.Join(dirs.DistroLibExecDir, "snap-confine"),
@@ -1738,7 +1738,7 @@ func (s *RunSuite) TestSnapRunExposeKerberosTickets(c *check.C) {
 
 	rest, err = snaprun.Parser(snaprun.Client()).ParseArgs([]string{"run", "--", "snapname.app"})
 	c.Assert(err, check.IsNil)
-	c.Assert(rest, check.DeepEquals, []string{"snapname.app"})
+	c.Assert(rest, check.DeepEquals, []string{})
 	c.Check(execArg0, check.Equals, filepath.Join(dirs.DistroLibExecDir, "snap-confine"))
 	c.Check(execArgs, check.DeepEquals, []string{
 		filepath.Join(dirs.DistroLibExecDir, "snap-confine"),
